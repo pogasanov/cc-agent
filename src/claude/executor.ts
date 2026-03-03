@@ -116,6 +116,11 @@ export async function runPlanPhase(
           const answer = await askQuestion(question, jobId, options);
           return { behavior: 'deny' as const, message: `User answered: ${answer}` };
         }
+        // Only allow read-only tools during plan phase
+        const readOnlyTools = ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Agent'];
+        if (!readOnlyTools.includes(toolName)) {
+          return { behavior: 'deny' as const, message: 'Write tools are not allowed during planning. Only explore and produce a plan.' };
+        }
         return { behavior: 'allow' as const, updatedInput: input };
       },
     });
