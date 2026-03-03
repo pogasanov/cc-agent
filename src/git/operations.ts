@@ -125,6 +125,21 @@ export async function checkCIStatus(ref: string): Promise<CIStatus> {
   };
 }
 
+/** Switch to an existing branch and pull latest from origin */
+export async function checkoutAndPull(branchName: string): Promise<void> {
+  await git.fetch('origin', branchName);
+
+  const branches = await git.branchLocal();
+  if (branches.all.includes(branchName)) {
+    await git.checkout(branchName);
+  } else {
+    await git.checkoutBranch(branchName, `origin/${branchName}`);
+  }
+
+  await git.pull('origin', branchName);
+  logger.info(`Checked out and pulled branch ${branchName}`);
+}
+
 /** Check if a branch exists on the remote */
 export async function remoteBranchExists(branchName: string): Promise<boolean> {
   const remotes = await git.listRemote(['--heads', 'origin', branchName]);

@@ -10,6 +10,7 @@ import { runPlanPhase, runImplPhase, runFixPhase } from '../claude/executor.js';
 import { runValidation, formatValidationErrors } from '../validate/runner.js';
 import {
   createBranch,
+  checkoutAndPull,
   commitAndPush,
   createPR,
   remoteBranchExists,
@@ -151,9 +152,11 @@ async function planPhase(job: Job<JobData>): Promise<void> {
     await markInProgress(currentSub.id);
   }
 
-  // Create branch
+  // Switch to branch — create from main if first sub-issue, otherwise checkout and pull
   if (!(await remoteBranchExists(data.branchName))) {
     await createBranch(data.branchName);
+  } else {
+    await checkoutAndPull(data.branchName);
   }
 
   const taskDescription = getCurrentTaskDescription(data);
