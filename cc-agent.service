@@ -1,0 +1,16 @@
+[Unit]
+Description=cc-agent — autonomous Claude Code daemon
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=agent
+WorkingDirectory=/opt/cc-agent
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+MemoryMax=1G
+EnvironmentFile=/opt/cc-agent/.env
+
+[Install]
+WantedBy=multi-user.target

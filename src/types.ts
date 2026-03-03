@@ -1,0 +1,61 @@
+/** Phases of a job's lifecycle */
+export type JobPhase =
+  | 'plan'
+  | 'approval'
+  | 'implement'
+  | 'push'
+  | 'ci_wait'
+  | 'mark_done';
+
+/** Data stored in each BullMQ job */
+export interface JobData {
+  linearIssueId: string;
+  linearSubIssueId?: string;
+  issueIdentifier: string;
+  issueTitle: string;
+  issueDescription: string;
+  subIssueDescription?: string;
+  branchName: string;
+  planSessionId?: string;
+  implSessionId?: string;
+  planText?: string;
+  prNumber?: number;
+  headSha?: string;
+  phase: JobPhase;
+}
+
+/** Result of plan approval via Telegram */
+export type ApprovalResult =
+  | { decision: 'approved' }
+  | { decision: 'rejected' }
+  | { decision: 'changes_requested'; feedback: string };
+
+/** Pending question awaiting a Telegram reply */
+export interface PendingQuestion {
+  correlationId: string;
+  jobId: string;
+  question: string;
+  options?: string[];
+  timestamp: number;
+}
+
+/** Linear issue as fetched from the API */
+export interface LinearIssueData {
+  id: string;
+  identifier: string;
+  title: string;
+  description: string | undefined;
+  branchName: string;
+  subIssues: Array<{
+    id: string;
+    identifier: string;
+    title: string;
+    description: string | undefined;
+  }>;
+}
+
+/** GitHub check suite status */
+export interface CIStatus {
+  conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'timed_out' | 'action_required' | null;
+  failedChecks: string[];
+}

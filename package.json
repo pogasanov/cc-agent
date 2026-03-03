@@ -1,0 +1,32 @@
+{
+  "name": "cc-agent",
+  "version": "0.1.0",
+  "description": "Autonomous Claude Code daemon bridging Linear, Telegram, and GitHub",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup src/index.ts --format esm --dts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.4",
+    "@linear/sdk": "^37.0.0",
+    "@octokit/rest": "^21.1.1",
+    "bullmq": "^5.52.2",
+    "dotenv": "^16.5.0",
+    "fastify": "^5.3.2",
+    "grammy": "^1.35.0",
+    "ioredis": "^5.6.1",
+    "simple-git": "^3.27.0",
+    "winston": "^3.17.0",
+    "zod": "^3.24.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
