@@ -74,9 +74,10 @@ export async function processJob(job: Job<JobData>): Promise<void> {
       logger.info(`Job ${job.id} was killed`);
       return; // User-initiated kill — don't retry
     }
-    logger.error(`Job ${job.id} failed in ${data.phase} phase: ${err}`);
+    const currentData = job.data; // Use fresh reference — data from line 34 may be stale after phase transitions
+    logger.error(`Job ${job.id} failed in ${currentData.phase} phase: ${err}`);
     await notifyWithRetry(
-      `Error in ${data.issueIdentifier || data.linearIssueId} (${data.phase}): ${err}`,
+      `Error in ${currentData.issueIdentifier || currentData.linearIssueId} (${currentData.phase}): ${err}`,
       job.id!,
     );
     throw err; // Let BullMQ handle the retry
@@ -344,18 +345,7 @@ async function markDonePhase(job: Job<JobData>): Promise<void> {
 
   const nextIndex = data.currentSubIssueIndex + 1;
   if (nextIndex < data.subIssues.length) {
-    // More sub-issues — ask before continuing
-    const nextSub = data.subIssues[nextIndex]!;
-    const answer = await askQuestion(
-      `Completed *${taskLabel}*. Continue to next sub-issue *${nextSub.identifier}* — ${nextSub.title}?`,
-      job.id!,
-      ['Yes', 'No'],
-    );
-
-    if (!answer.toLowerCase().startsWith('y')) {
-      await notify(`Paused after ${taskLabel}. Use /restart to resume later.`);
-      return;
-    }
+    await notify(`Completed *${taskLabel}*. Moving to next sub-issue...`);
 
     await job.updateData({
       ...job.data,
