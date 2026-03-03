@@ -330,7 +330,9 @@ async function withRateLimitRetry(
   throw new Error(`Exceeded max rate limit retries for ${phase} phase`);
 }
 
-const STANDING_INSTRUCTIONS = `Do not run E2E tests - they will be executed in CI`;
+const STANDING_INSTRUCTIONS = `1. Do not run E2E tests - they will be executed in CI.
+2. Use skill \`frontend-design\` when designing the UI.
+3. Use skill \`test-driven-development\` when writing code.`;
 
 function buildPlanPrompt(taskDescription: string): string {
   return `You are working on a task from our project management system.
