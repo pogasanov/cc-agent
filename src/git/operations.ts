@@ -55,17 +55,48 @@ export async function createPR(
   title: string,
   description: string,
 ): Promise<{ prNumber: number; prUrl: string }> {
-  const { data } = await octokit.rest.pulls.create({
+  try {
+    const { data } = await octokit.rest.pulls.create({
+      owner: config.GITHUB_OWNER,
+      repo: config.GITHUB_REPO,
+      title: `[${issueIdentifier}] ${title}`,
+      body: description,
+      head: branchName,
+      base: 'main',
+      draft: true,
+    });
+
+    logger.info(`PR #${data.number} created: ${data.html_url}`);
+    return { prNumber: data.number, prUrl: data.html_url };
+  } catch (err: any) {
+    // PR already exists for this branch — find and return it
+    if (err.status === 422) {
+      const { data: pulls } = await octokit.rest.pulls.list({
+        owner: config.GITHUB_OWNER,
+        repo: config.GITHUB_REPO,
+        head: `${config.GITHUB_OWNER}:${branchName}`,
+        state: 'open',
+      });
+
+      if (pulls.length > 0) {
+        const pr = pulls[0]!;
+        logger.info(`PR #${pr.number} already exists: ${pr.html_url}`);
+        return { prNumber: pr.number, prUrl: pr.html_url };
+      }
+    }
+    throw err;
+  }
+}
+
+/** Mark a draft PR as ready for review */
+export async function markPRReady(prNumber: number): Promise<void> {
+  await octokit.rest.pulls.update({
     owner: config.GITHUB_OWNER,
     repo: config.GITHUB_REPO,
-    title: `[${issueIdentifier}] ${title}`,
-    body: description,
-    head: branchName,
-    base: 'main',
+    pull_number: prNumber,
+    draft: false,
   });
-
-  logger.info(`PR #${data.number} created: ${data.html_url}`);
-  return { prNumber: data.number, prUrl: data.html_url };
+  logger.info(`PR #${prNumber} marked as ready for review`);
 }
 
 /** Poll GitHub Checks API for CI status (fallback) */

@@ -13,6 +13,7 @@ import {
   createPR,
   remoteBranchExists,
   checkCIStatus,
+  markPRReady,
 } from '../git/operations.js';
 import { getRedis, getAbortSignal, clearAbort, isShuttingDown } from './setup.js';
 import { logger } from '../logger.js';
@@ -249,17 +250,34 @@ async function pushPhase(job: Job<JobData>): Promise<void> {
     description,
   );
 
-  await job.updateData({
-    ...job.data,
-    headSha: sha,
-    prNumber,
-    phase: 'ci_wait',
-  });
+  const isLastSubIssue = data.subIssues.length === 0 ||
+    data.currentSubIssueIndex >= data.subIssues.length - 1;
 
-  await notify(`PR created for ${data.issueIdentifier}: ${prUrl}\nWaiting for CI...`);
+  if (isLastSubIssue) {
+    await job.updateData({
+      ...job.data,
+      headSha: sha,
+      prNumber,
+      phase: 'ci_wait',
+    });
 
-  checkAbort(getAbortSignal(job.id!));
-  await ciWaitPhase(job);
+    await notify(`PR created for ${data.issueIdentifier}: ${prUrl}\nWaiting for CI...`);
+
+    checkAbort(getAbortSignal(job.id!));
+    await ciWaitPhase(job);
+  } else {
+    await job.updateData({
+      ...job.data,
+      headSha: sha,
+      prNumber,
+      phase: 'mark_done',
+    });
+
+    await notify(`Pushed ${currentTaskLabel(data)} to ${prUrl}`);
+
+    checkAbort(getAbortSignal(job.id!));
+    await markDonePhase(job);
+  }
 }
 
 async function ciWaitPhase(job: Job<JobData>): Promise<void> {
@@ -356,6 +374,9 @@ async function markDonePhase(job: Job<JobData>): Promise<void> {
     // All sub-issues done (or no sub-issues) — mark main issue done too if we had sub-issues
     if (data.subIssues.length > 0) {
       await markDone(data.linearIssueId);
+    }
+    if (data.prNumber) {
+      await markPRReady(data.prNumber);
     }
     await notify(`${data.issueIdentifier} fully completed! Branch: \`${data.branchName}\``);
   }
