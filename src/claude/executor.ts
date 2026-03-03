@@ -207,6 +207,14 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
       }
     }
 
+    if (message.type === 'user' && (message as any).parent_tool_use_id) {
+      const toolResult = (message as any).tool_use_result;
+      if (toolResult !== undefined) {
+        const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+        logger.info(`[claude] tool result: ${resultStr.slice(0, 500)}`);
+      }
+    }
+
     if (message.type === 'result') {
       resultText = (message as any).result;
       logger.info(`[claude] result: ${resultText.slice(0, 500)}`);
