@@ -110,6 +110,7 @@ export async function runPlanPhase(
       prompt,
       permissionMode: 'plan',
       resume,
+      suppressResultNotification: true,
       canUseTool: async (toolName, input) => {
         if (toolName === 'AskUserQuestion') {
           const { text: question, options } = extractQuestion(input);
@@ -174,6 +175,8 @@ interface SessionOptions {
   prompt: string;
   permissionMode: string;
   resume?: string;
+  /** When true, the final assistant text (= resultText) is not sent via notify(), since the caller will send it separately (e.g. with approval buttons) */
+  suppressResultNotification?: boolean;
   canUseTool: (toolName: string, input: Record<string, unknown>) => Promise<any>;
 }
 
@@ -181,6 +184,10 @@ interface SessionOptions {
 async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
   let sessionId = '';
   let resultText = '';
+  // When suppressResultNotification is set, buffer the last assistant text so we
+  // can skip notifying it (it will be sent separately, e.g. with approval buttons).
+  // All previous texts are flushed (notified) as new ones arrive.
+  let pendingText: string | null = null;
 
   const q = query({
     prompt: opts.prompt,
@@ -204,7 +211,15 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
         for (const block of content) {
           if (block.type === 'text' && block.text) {
             logger.info(`[claude] ${block.text}`);
-            notify(block.text).catch(() => {});
+            if (opts.suppressResultNotification) {
+              // Flush the previously buffered text before buffering the new one
+              if (pendingText !== null) {
+                notify(pendingText).catch(() => {});
+              }
+              pendingText = block.text;
+            } else {
+              notify(block.text).catch(() => {});
+            }
           } else if (block.type === 'tool_use') {
             logger.info(`[claude] tool: ${block.name}(${JSON.stringify(block.input).slice(0, 200)})`);
           }
@@ -224,6 +239,12 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
       resultText = (message as any).result;
       logger.info(`[claude] result: ${resultText.slice(0, 500)}`);
     }
+  }
+
+  // If suppressing and the buffered text is the final result, drop it
+  // (the caller will send it with buttons). Otherwise flush it.
+  if (pendingText !== null && pendingText !== resultText) {
+    notify(pendingText).catch(() => {});
   }
 
   return { sessionId: sessionId || opts.resume || '', resultText };
