@@ -11,8 +11,12 @@ let redis: Redis;
 
 /** AbortControllers for active jobs — kill signals the controller */
 const activeAborts = new Map<string, AbortController>();
+let shuttingDown = false;
 
 export function getAbortSignal(jobId: string): AbortSignal {
+  if (shuttingDown) {
+    return AbortSignal.abort();
+  }
   let ctrl = activeAborts.get(jobId);
   if (!ctrl) {
     ctrl = new AbortController();
@@ -229,6 +233,14 @@ export async function listJobs(): Promise<Array<{ id: string; state: string; ide
 }
 
 export async function closeQueue(): Promise<void> {
+  // Set global shutdown flag so any new getAbortSignal calls return aborted
+  shuttingDown = true;
+
+  // Abort all active jobs so processors stop immediately
+  for (const [, ctrl] of activeAborts) {
+    ctrl.abort();
+  }
+
   await worker?.close();
   await queue?.close();
   await redis?.quit();
