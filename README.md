@@ -1,21 +1,39 @@
 # cc-agent
 
-Autonomous daemon that bridges Linear project management with Claude Code execution, using Telegram as the human-in-the-loop interface.
+Autonomous coding agent that picks up Linear issues, plans and implements them with Claude Code, and ships pull requests — with a human in the loop via Telegram. Assign a ticket, approve the plan in your chat, and come back to a ready PR.
 
 ## How it works
 
 ```
-Linear webhook → Fastify server → BullMQ job → Claude Code plans → Telegram approval
-→ Claude Code implements → Git push → GitHub webhook (CI done) → Mark done in Linear
+                          ┌─────────────────────────────────────────┐
+                          │             cc-agent daemon             │
+                          └─────────────────────────────────────────┘
+
+ ┌────────┐  webhook   ┌──────────┐  enqueue   ┌────────┐  Claude Code   ┌──────┐
+ │ Linear │ ────────▶  │  Fastify │ ────────▶  │ BullMQ │ ───────────▶   │ Plan │
+ └────────┘            │  server  │            │  queue │               └──┬───┘
+                       └──────────┘            └────────┘                  │
+                                                                           ▼
+┌──────────┐                                                        ┌───────────┐
+│ Mark Done│                                                        │ Telegram  │
+│ in Linear│                                                        │ approval  │
+└────┬─────┘                                                        └─────┬─────┘
+     ▲                                                                    │
+     │                                                                    ▼
+┌────┴────┐   check_suite   ┌─────────┐   git push   ┌──────────┐  ┌─────────┐
+│ CI wait │ ◀────────────── │  GitHub  │ ◀─────────── │   Push   │◀─│  Impl   │
+│         │    webhook      │         │               │ + PR     │  │ + Valid. │
+└─────────┘                 └─────────┘               └──────────┘  └─────────┘
 ```
 
-1. **Detection**: Linear webhook fires when an issue is assigned to the agent user and moved to Todo
-2. **Planning**: Claude Code explores the codebase and generates an implementation plan (read-only)
-3. **Approval**: Plan is sent to Telegram for human review (approve / reject / request changes)
-4. **Implementation**: Claude Code implements the approved plan (with dangerous command gating via Telegram)
-5. **Push**: Changes are committed, pushed, and a PR is created
-6. **CI**: Waits for GitHub check suite to pass (webhook-driven, with 30min polling fallback)
-7. **Done**: Marks the Linear issue as Done
+1. **Detection** — Linear webhook fires when an issue is assigned to the agent user
+2. **Planning** — Claude Code explores the codebase and generates an implementation plan (read-only tools only)
+3. **Approval** — Plan is sent to Telegram for human review (approve / reject / request changes)
+4. **Implementation** — Claude Code implements the approved plan (dangerous commands gated via Telegram)
+5. **Validation** — Runs lint, typecheck, build, and tests; auto-fixes failures (up to 3 retries)
+6. **Push** — Changes are committed, pushed, and a PR is created
+7. **CI wait** — Waits for GitHub check suite to pass (webhook-driven, 30 min polling fallback)
+8. **Done** — Marks the Linear issue as Done; processes next sub-issue if any
 
 ## Prerequisites
 
@@ -158,3 +176,14 @@ npm run dev          # Run with tsx (hot reload)
 npm run typecheck    # Type check without emitting
 npm run build        # Production build with tsup
 ```
+
+## Extra features
+
+- **Standing instructions** — Inject custom rules into planning and implementation prompts (e.g. "use TDD", "skip E2E tests", "use the frontend-design skill")
+- **Structured logging** — Winston logger with JSON format, timestamps, and colorized console output
+- **Rate-limit handling** — Automatically detects Claude API rate/token limits, notifies Telegram, pauses, and resumes from the stored session
+- **Dangerous command gating** — Commands matching patterns like `rm -rf`, `DROP TABLE`, or `format /` require explicit Telegram approval before execution
+- **Sub-issue support** — Parent issues with sub-issues are processed sequentially; a single branch and PR is created for all of them
+- **Validation loop** — After implementation, runs lint/typecheck/build/tests and feeds failures back to Claude for auto-fix (up to 3 retries)
+- **Crash recovery** — BullMQ persists jobs in Redis; on restart, stalled jobs are detected and resumed from their last phase and Claude session
+- **Telegram commands** — `/status`, `/restart`, `/retry`, `/kill` for managing jobs on the go, plus inline retry buttons on failure notifications
