@@ -255,6 +255,8 @@ async function pushPhase(job: Job<JobData>): Promise<void> {
     data.currentSubIssueIndex >= data.subIssues.length - 1;
 
   if (isLastSubIssue) {
+    await markPRReady(prNumber);
+
     await job.updateData({
       ...job.data,
       headSha: sha,
