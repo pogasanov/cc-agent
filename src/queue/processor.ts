@@ -88,12 +88,14 @@ async function setupJob(job: Job<JobData>): Promise<void> {
     issueIdentifier: issue.identifier,
     issueTitle: issue.title,
     issueDescription: issue.description ?? '',
-    subIssues: issue.subIssues.map((s) => ({
-      id: s.id,
-      identifier: s.identifier,
-      title: s.title,
-      description: s.description,
-    })),
+    subIssues: issue.subIssues
+      .map((s) => ({
+        id: s.id,
+        identifier: s.identifier,
+        title: s.title,
+        description: s.description,
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true })),
     currentSubIssueIndex: 0,
     branchName: `agent/${issue.identifier.toLowerCase()}-${slugify(issue.title)}`,
   });
@@ -123,12 +125,19 @@ async function planPhase(job: Job<JobData>): Promise<void> {
   const taskLabel = currentTaskLabel(data);
   logger.info(`[${taskLabel}] Plan phase (job ${job.id})`);
 
+  // Mark current sub-issue as in progress
+  const currentSub = data.subIssues[data.currentSubIssueIndex];
+  if (currentSub) {
+    await markInProgress(currentSub.id);
+  }
+
   // Create branch
   if (!(await remoteBranchExists(data.branchName))) {
     await createBranch(data.branchName);
   }
 
   const taskDescription = getCurrentTaskDescription(data);
+  await notify(`Prompt for *${taskLabel}*:\n\`\`\`\n${taskDescription}\n\`\`\``);
   const result = await runPlanPhase(taskDescription, job.id!, data.planSessionId);
 
   await job.updateData({

@@ -15,16 +15,18 @@ export function initLinearClient(config: Config): void {
   });
 }
 
-/** Fetch an issue with its first sub-issue (if any) */
+/** Fetch an issue with its non-completed sub-issues */
 export async function fetchIssue(issueId: string): Promise<LinearIssueData> {
   const issue = await client.issue(issueId);
   const childrenConnection = await issue.children();
-  const subIssues = childrenConnection.nodes.map((sub) => ({
-    id: sub.id,
-    identifier: sub.identifier,
-    title: sub.title,
-    description: sub.description,
-  }));
+  const subIssues = childrenConnection.nodes
+    .filter((sub) => !sub.completedAt)
+    .map((sub) => ({
+      id: sub.id,
+      identifier: sub.identifier,
+      title: sub.title,
+      description: sub.description,
+    }));
 
   return {
     id: issue.id,
