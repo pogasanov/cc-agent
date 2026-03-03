@@ -82,38 +82,54 @@ export async function processJob(job: Job<JobData>): Promise<void> {
 
 async function setupJob(job: Job<JobData>): Promise<void> {
   const issue = await fetchIssue(job.data.linearIssueId);
-  const sub = issue.subIssues[0];
 
   await job.updateData({
     ...job.data,
     issueIdentifier: issue.identifier,
     issueTitle: issue.title,
     issueDescription: issue.description ?? '',
-    linearSubIssueId: sub?.id,
-    subIssueDescription: sub?.description,
+    subIssues: issue.subIssues.map((s) => ({
+      id: s.id,
+      identifier: s.identifier,
+      title: s.title,
+      description: s.description,
+    })),
+    currentSubIssueIndex: 0,
     branchName: `agent/${issue.identifier.toLowerCase()}-${slugify(issue.title)}`,
   });
 
   await markInProgress(job.data.linearIssueId);
 
-  await notify(`Starting on *${issue.identifier}*: ${issue.title}`);
+  const subCount = issue.subIssues.length;
+  await notify(
+    `Starting on *${issue.identifier}*: ${issue.title}` +
+      (subCount > 0 ? ` (${subCount} sub-issues)` : ''),
+  );
+}
+
+/** Get the task description to feed to Claude — sub-issue text only, or main issue if no sub-issues */
+function getCurrentTaskDescription(data: JobData): string {
+  if (data.subIssues.length === 0) {
+    return data.issueDescription;
+  }
+  const sub = data.subIssues[data.currentSubIssueIndex]!;
+  const parts = [`# ${sub.title}`];
+  if (sub.description) parts.push(sub.description);
+  return parts.join('\n\n');
 }
 
 async function planPhase(job: Job<JobData>): Promise<void> {
   const data = job.data;
-  logger.info(`[${data.issueIdentifier}] Plan phase (job ${job.id})`);
+  const taskLabel = currentTaskLabel(data);
+  logger.info(`[${taskLabel}] Plan phase (job ${job.id})`);
 
   // Create branch
   if (!(await remoteBranchExists(data.branchName))) {
     await createBranch(data.branchName);
   }
 
-  const result = await runPlanPhase(
-    data.issueDescription,
-    data.subIssueDescription,
-    job.id!,
-    data.planSessionId,
-  );
+  const taskDescription = getCurrentTaskDescription(data);
+  const result = await runPlanPhase(taskDescription, job.id!, data.planSessionId);
 
   await job.updateData({
     ...job.data,
@@ -147,21 +163,18 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
   }
 
   if (approval.decision === 'changes_requested') {
+    const taskLabel = currentTaskLabel(data);
     if (retryCount >= MAX_PLAN_RETRIES) {
-      await notify(`Max plan retries reached for ${data.issueIdentifier}. Stopping.`);
+      await notify(`Max plan retries reached for ${taskLabel}. Stopping.`);
       return;
     }
 
-    await notify(`Re-planning ${data.issueIdentifier} with feedback...`);
+    await notify(`Re-planning ${taskLabel} with feedback...`);
 
     // Re-run plan phase with feedback appended
-    const feedbackPrompt = `${data.issueDescription}\n\n## Feedback on previous plan\n${approval.feedback}`;
-    const result = await runPlanPhase(
-      feedbackPrompt,
-      data.subIssueDescription,
-      job.id!,
-      data.planSessionId,
-    );
+    const taskDescription = getCurrentTaskDescription(data);
+    const feedbackPrompt = `${taskDescription}\n\n## Feedback on previous plan\n${approval.feedback}`;
+    const result = await runPlanPhase(feedbackPrompt, job.id!, data.planSessionId);
 
     await job.updateData({
       ...job.data,
@@ -281,17 +294,49 @@ async function ciWaitPhase(job: Job<JobData>): Promise<void> {
 
 async function markDonePhase(job: Job<JobData>): Promise<void> {
   const data = job.data;
-  logger.info(`[${data.issueIdentifier}] Marking done (job ${job.id})`);
+  const taskLabel = currentTaskLabel(data);
+  logger.info(`[${taskLabel}] Marking done (job ${job.id})`);
 
-  const targetIssueId = data.linearSubIssueId ?? data.linearIssueId;
+  // Mark the current sub-issue (or main issue) as done
+  const currentSub = data.subIssues[data.currentSubIssueIndex];
+  const targetIssueId = currentSub?.id ?? data.linearIssueId;
   await markDone(targetIssueId);
 
-  await notify(
-    `${data.issueIdentifier} completed! Branch: \`${data.branchName}\``,
-  );
+  const nextIndex = data.currentSubIssueIndex + 1;
+  if (nextIndex < data.subIssues.length) {
+    // More sub-issues — advance and restart the cycle
+    const nextSub = data.subIssues[nextIndex]!;
+    await notify(`Completed ${taskLabel}. Moving to next: *${nextSub.identifier}* — ${nextSub.title}`);
+
+    await job.updateData({
+      ...job.data,
+      currentSubIssueIndex: nextIndex,
+      planSessionId: undefined,
+      implSessionId: undefined,
+      planText: undefined,
+      prNumber: undefined,
+      headSha: undefined,
+      phase: 'plan',
+    });
+
+    checkAbort(getAbortSignal(job.id!));
+    await planPhase(job);
+  } else {
+    // All sub-issues done (or no sub-issues) — mark main issue done too if we had sub-issues
+    if (data.subIssues.length > 0) {
+      await markDone(data.linearIssueId);
+    }
+    await notify(`${data.issueIdentifier} fully completed! Branch: \`${data.branchName}\``);
+  }
 }
 
 // --- Helpers ---
+
+/** Human-readable label for the current task (sub-issue identifier or main issue) */
+function currentTaskLabel(data: JobData): string {
+  const sub = data.subIssues[data.currentSubIssueIndex];
+  return sub?.identifier ?? data.issueIdentifier;
+}
 
 function waitForCIWebhook(
   subscriber: ReturnType<typeof getRedis>,

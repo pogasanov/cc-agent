@@ -99,12 +99,11 @@ export interface ClaudeResult {
 
 /** Run the plan phase — read-only exploration + plan generation */
 export async function runPlanPhase(
-  issueDescription: string,
-  subIssueDescription: string | undefined,
+  taskDescription: string,
   jobId: string,
   resumeSessionId?: string,
 ): Promise<ClaudeResult> {
-  const prompt = buildPlanPrompt(issueDescription, subIssueDescription);
+  const prompt = buildPlanPrompt(taskDescription);
 
   return withRateLimitRetry('plan', resumeSessionId, (resume) => {
     return runClaudeSession({
@@ -258,21 +257,15 @@ async function withRateLimitRetry(
   throw new Error(`Exceeded max rate limit retries for ${phase} phase`);
 }
 
-function buildPlanPrompt(
-  issueDescription: string,
-  subIssueDescription: string | undefined,
-): string {
-  let prompt = `You are working on a task from our project management system.\n\n## Main Issue\n${issueDescription}`;
+function buildPlanPrompt(taskDescription: string): string {
+  return `You are working on a task from our project management system.
 
-  if (subIssueDescription) {
-    prompt += `\n\n## Sub-Issue (implement this)\n${subIssueDescription}`;
-  }
+## Task
+${taskDescription}
 
-  prompt += `\n\nExplore the codebase and form a detailed implementation plan. Describe:
+Explore the codebase and form a detailed implementation plan. Describe:
 1. Which files need to be created or modified
 2. What changes are needed in each file
 3. Any dependencies or considerations
 4. The order of implementation steps`;
-
-  return prompt;
 }

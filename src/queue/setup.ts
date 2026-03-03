@@ -138,6 +138,8 @@ export async function enqueueIssue(issueId: string): Promise<void> {
       issueIdentifier: '',
       issueTitle: '',
       issueDescription: '',
+      subIssues: [],
+      currentSubIssueIndex: 0,
       branchName: '',
       phase: 'plan',
     },

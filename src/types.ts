@@ -7,14 +7,22 @@ export type JobPhase =
   | 'ci_wait'
   | 'mark_done';
 
+/** Minimal sub-issue info stored on the job */
+export interface SubIssueRef {
+  id: string;
+  identifier: string;
+  title: string;
+  description: string | undefined;
+}
+
 /** Data stored in each BullMQ job */
 export interface JobData {
   linearIssueId: string;
-  linearSubIssueId?: string;
   issueIdentifier: string;
   issueTitle: string;
   issueDescription: string;
-  subIssueDescription?: string;
+  subIssues: SubIssueRef[];
+  currentSubIssueIndex: number;
   branchName: string;
   planSessionId?: string;
   implSessionId?: string;
