@@ -169,6 +169,45 @@ export async function runImplPhase(
   });
 }
 
+/** Run a fix phase — resume the impl session with validation errors to fix */
+export async function runFixPhase(
+  implSessionId: string,
+  validationErrors: string,
+  jobId: string,
+): Promise<ClaudeResult> {
+  return withRateLimitRetry('fix', implSessionId, (resume) => {
+    return runClaudeSession({
+      prompt: `The following validation checks failed after your implementation. Please fix all errors:\n\n${validationErrors}`,
+      permissionMode: 'default',
+      resume,
+      canUseTool: async (toolName, input) => {
+        if (['Read', 'Edit', 'Write', 'Glob', 'Grep', 'NotebookEdit'].includes(toolName)) {
+          return { behavior: 'allow' as const, updatedInput: input };
+        }
+
+        if (toolName === 'Bash') {
+          const command = (input as any).command ?? '';
+          if (isDangerousCommand(command)) {
+            const allowed = await requestPermission(command, jobId);
+            if (!allowed) {
+              return { behavior: 'deny' as const, message: 'Command denied by operator' };
+            }
+          }
+          return { behavior: 'allow' as const, updatedInput: input };
+        }
+
+        if (toolName === 'AskUserQuestion') {
+          const { text: question, options } = extractQuestion(input);
+          const answer = await askQuestion(question, jobId, options);
+          return { behavior: 'deny' as const, message: `User answered: ${answer}` };
+        }
+
+        return { behavior: 'allow' as const, updatedInput: input };
+      },
+    });
+  });
+}
+
 // --- Internal helpers ---
 
 interface SessionOptions {

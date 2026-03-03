@@ -3,6 +3,7 @@ export type JobPhase =
   | 'plan'
   | 'approval'
   | 'implement'
+  | 'validate'
   | 'push'
   | 'ci_wait'
   | 'mark_done';
@@ -29,6 +30,7 @@ export interface JobData {
   planText?: string;
   prNumber?: number;
   headSha?: string;
+  validateAttempt?: number;
   phase: JobPhase;
 }
 

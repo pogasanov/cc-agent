@@ -6,7 +6,8 @@ import {
   markDone,
 } from '../linear/client.js';
 import { notify, notifyWithRetry, requestPlanApproval, askQuestion } from '../telegram/bridge.js';
-import { runPlanPhase, runImplPhase } from '../claude/executor.js';
+import { runPlanPhase, runImplPhase, runFixPhase } from '../claude/executor.js';
+import { runValidation, formatValidationErrors } from '../validate/runner.js';
 import {
   createBranch,
   commitAndPush,
@@ -15,10 +16,11 @@ import {
   checkCIStatus,
   markPRReady,
 } from '../git/operations.js';
-import { getRedis, getAbortSignal, clearAbort, isShuttingDown } from './setup.js';
+import { getRedis, getAbortSignal, clearAbort, isShuttingDown, getRepoPath } from './setup.js';
 import { logger } from '../logger.js';
 
 const MAX_PLAN_RETRIES = 3;
+const MAX_VALIDATE_RETRIES = 3;
 const CI_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 class JobKilledError extends Error {
@@ -54,6 +56,9 @@ export async function processJob(job: Job<JobData>): Promise<void> {
         break;
       case 'implement':
         await implementPhase(job);
+        break;
+      case 'validate':
+        await validatePhase(job);
         break;
       case 'push':
         await pushPhase(job);
@@ -225,11 +230,57 @@ async function implementPhase(job: Job<JobData>): Promise<void> {
   await job.updateData({
     ...job.data,
     implSessionId: result.sessionId,
-    phase: 'push',
+    validateAttempt: 0,
+    phase: 'validate',
   });
 
   checkAbort(getAbortSignal(job.id!));
-  await pushPhase(job);
+  await validatePhase(job);
+}
+
+async function validatePhase(job: Job<JobData>): Promise<void> {
+  const data = job.data;
+  const taskLabel = currentTaskLabel(data);
+  const attempt = data.validateAttempt ?? 0;
+  logger.info(`[${taskLabel}] Validate phase attempt ${attempt + 1} (job ${job.id})`);
+
+  await notify(`Running validation for *${taskLabel}* (lint, build, tests)...`);
+
+  const report = await runValidation(getRepoPath());
+
+  if (report.passed) {
+    logger.info(`[${taskLabel}] All validation checks passed`);
+    await notify(`Validation passed for *${taskLabel}*`);
+
+    await job.updateData({ ...job.data, phase: 'push' });
+    checkAbort(getAbortSignal(job.id!));
+    await pushPhase(job);
+    return;
+  }
+
+  // Validation failed
+  const errorSummary = formatValidationErrors(report);
+  const failedLabels = report.results.filter((r) => !r.passed).map((r) => r.label).join(', ');
+  await notify(`Validation failed for *${taskLabel}* (${failedLabels}). Attempt ${attempt + 1}/${MAX_VALIDATE_RETRIES}.`);
+
+  if (attempt >= MAX_VALIDATE_RETRIES - 1) {
+    await notify(`Max validation retries reached for *${taskLabel}*. Stopping.`);
+    throw new Error(`Validation failed after ${MAX_VALIDATE_RETRIES} attempts: ${failedLabels}`);
+  }
+
+  // Send errors to Claude to fix
+  logger.info(`[${taskLabel}] Sending validation errors to Claude for fixing`);
+  const fixResult = await runFixPhase(data.implSessionId!, errorSummary, job.id!);
+
+  await job.updateData({
+    ...job.data,
+    implSessionId: fixResult.sessionId,
+    validateAttempt: attempt + 1,
+    phase: 'validate',
+  });
+
+  checkAbort(getAbortSignal(job.id!));
+  await validatePhase(job);
 }
 
 async function pushPhase(job: Job<JobData>): Promise<void> {

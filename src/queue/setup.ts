@@ -8,6 +8,7 @@ import { logger } from '../logger.js';
 let queue: Queue<JobData>;
 let worker: Worker<JobData>;
 let redis: Redis;
+let repoPath: string;
 
 /** AbortControllers for active jobs — kill signals the controller */
 const activeAborts = new Map<string, AbortController>();
@@ -37,6 +38,10 @@ export function getRedis(): Redis {
   return redis;
 }
 
+export function getRepoPath(): string {
+  return repoPath;
+}
+
 export function getQueue(): Queue<JobData> {
   return queue;
 }
@@ -45,6 +50,7 @@ let connection: { host: string; port: number };
 
 /** Initialize Redis + queue only (no worker yet) */
 export function initQueue(config: Config): void {
+  repoPath = config.REPO_PATH;
   const redisUrl = new URL(config.REDIS_URL);
 
   connection = {
