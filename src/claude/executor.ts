@@ -138,7 +138,7 @@ export async function runImplPhase(
 
   return withRateLimitRetry('impl', effectiveSessionId, (resume) => {
     return runClaudeSession({
-      prompt: 'The plan has been approved. Proceed with implementation.',
+      prompt: `The plan has been approved. Proceed with implementation.\n\n## Instructions\n${STANDING_INSTRUCTIONS}`,
       permissionMode: 'default',
       resume,
       canUseTool: async (toolName, input) => {
@@ -177,7 +177,7 @@ export async function runFixPhase(
 ): Promise<ClaudeResult> {
   return withRateLimitRetry('fix', implSessionId, (resume) => {
     return runClaudeSession({
-      prompt: `The following validation checks failed after your implementation. Please fix all errors:\n\n${validationErrors}`,
+      prompt: `The following validation checks failed after your implementation. Please fix all errors:\n\n${validationErrors}\n\n## Instructions\n${STANDING_INSTRUCTIONS}`,
       permissionMode: 'default',
       resume,
       canUseTool: async (toolName, input) => {
@@ -330,11 +330,16 @@ async function withRateLimitRetry(
   throw new Error(`Exceeded max rate limit retries for ${phase} phase`);
 }
 
+const STANDING_INSTRUCTIONS = `Do not run E2E tests - they will be executed in CI`;
+
 function buildPlanPrompt(taskDescription: string): string {
   return `You are working on a task from our project management system.
 
 ## Task
 ${taskDescription}
+
+## Instructions
+${STANDING_INSTRUCTIONS}
 
 Explore the codebase and form a detailed implementation plan. Describe:
 1. Which files need to be created or modified
