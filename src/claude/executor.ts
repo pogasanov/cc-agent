@@ -116,7 +116,7 @@ export async function runPlanPhase(
           const answer = await askQuestion(question, jobId, options);
           return { behavior: 'deny' as const, message: `User answered: ${answer}` };
         }
-        return { behavior: 'allow' as const };
+        return { behavior: 'allow' as const, updatedInput: input };
       },
     });
   });
@@ -137,7 +137,7 @@ export async function runImplPhase(
       resume,
       canUseTool: async (toolName, input) => {
         if (['Read', 'Edit', 'Write', 'Glob', 'Grep', 'NotebookEdit'].includes(toolName)) {
-          return { behavior: 'allow' as const };
+          return { behavior: 'allow' as const, updatedInput: input };
         }
 
         if (toolName === 'Bash') {
@@ -148,7 +148,7 @@ export async function runImplPhase(
               return { behavior: 'deny' as const, message: 'Command denied by operator' };
             }
           }
-          return { behavior: 'allow' as const };
+          return { behavior: 'allow' as const, updatedInput: input };
         }
 
         if (toolName === 'AskUserQuestion') {
@@ -157,7 +157,7 @@ export async function runImplPhase(
           return { behavior: 'deny' as const, message: `User answered: ${answer}` };
         }
 
-        return { behavior: 'allow' as const };
+        return { behavior: 'allow' as const, updatedInput: input };
       },
     });
   });
