@@ -78,6 +78,8 @@ export async function initTelegramBot(config: Config): Promise<Bot> {
   bot.on('callback_query:data', async (ctx) => {
     if (String(ctx.chat?.id) !== chatId) return;
     await ctx.answerCallbackQuery();
+    // Remove inline keyboard buttons after user clicks
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
 
     const data = ctx.callbackQuery.data;
 
