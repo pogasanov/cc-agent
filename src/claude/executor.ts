@@ -22,6 +22,24 @@ function isDangerousCommand(command: string): boolean {
   return DANGEROUS_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+/** Extract question text and options from AskUserQuestion tool input */
+function extractQuestion(input: Record<string, unknown>): { text: string; options: string[] } {
+  const questions = (input as any).questions;
+  if (Array.isArray(questions) && questions.length > 0) {
+    const q = questions[0];
+    const text = q.question ?? q.header ?? '';
+    const options: string[] = [];
+    if (Array.isArray(q.options)) {
+      for (const o of q.options) {
+        if (o.label) options.push(o.label);
+      }
+    }
+    return { text, options };
+  }
+  if (typeof input.question === 'string') return { text: input.question, options: [] };
+  return { text: JSON.stringify(input), options: [] };
+}
+
 /** Max number of consecutive rate-limit retries before giving up */
 const MAX_RATE_LIMIT_RETRIES = 5;
 
@@ -95,8 +113,8 @@ export async function runPlanPhase(
       resume,
       canUseTool: async (toolName, input) => {
         if (toolName === 'AskUserQuestion') {
-          const question = (input as any).question ?? String(input);
-          const answer = await askQuestion(question, jobId);
+          const { text: question, options } = extractQuestion(input);
+          const answer = await askQuestion(question, jobId, options);
           return { behavior: 'deny' as const, message: `User answered: ${answer}` };
         }
         return { behavior: 'allow' as const };
@@ -135,8 +153,8 @@ export async function runImplPhase(
         }
 
         if (toolName === 'AskUserQuestion') {
-          const question = (input as any).question ?? String(input);
-          const answer = await askQuestion(question, jobId);
+          const { text: question, options } = extractQuestion(input);
+          const answer = await askQuestion(question, jobId, options);
           return { behavior: 'deny' as const, message: `User answered: ${answer}` };
         }
 
@@ -176,8 +194,23 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
       logger.info(`Claude session started: ${sessionId}`);
     }
 
+    if (message.type === 'assistant') {
+      const content = (message as any).message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text' && block.text) {
+            logger.info(`[claude] ${block.text}`);
+            notify(block.text).catch(() => {});
+          } else if (block.type === 'tool_use') {
+            logger.info(`[claude] tool: ${block.name}(${JSON.stringify(block.input).slice(0, 200)})`);
+          }
+        }
+      }
+    }
+
     if (message.type === 'result') {
       resultText = (message as any).result;
+      logger.info(`[claude] result: ${resultText.slice(0, 500)}`);
     }
   }
 

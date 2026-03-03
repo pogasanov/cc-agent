@@ -70,11 +70,11 @@ cp .env.example .env
 
 ```bash
 # Development
-npm run dev
+pnpm run dev
 
 # Production
-npm run build
-npm start
+pnpm run build
+pnpm start
 ```
 
 ### 6. systemd (optional)
@@ -103,6 +103,17 @@ sudo systemctl enable --now cc-agent
 | `REDIS_URL` | Redis connection URL (default: `redis://localhost:6379`) |
 | `WEBHOOK_PORT` | HTTP server port (default: `3000`) |
 | `WEBHOOK_BASE_URL` | Public URL for webhook endpoints |
+
+## Telegram Commands
+
+| Command | Description |
+|---|---|
+| `/status` | List all active, failed, and delayed jobs |
+| `/restart` | Resume the latest failed/delayed job from its current phase |
+| `/retry` | Restart the latest failed/delayed job from scratch (plan phase) |
+| `/kill` | Force-stop and remove a job (aborts in-flight execution) |
+
+Failure notifications also include inline **Retry (resume)** and **Retry (fresh)** buttons.
 
 ## Architecture
 

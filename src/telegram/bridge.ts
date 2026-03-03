@@ -17,8 +17,20 @@ export async function notify(message: string): Promise<void> {
   await getBot().api.sendMessage(chatId, message, { parse_mode: 'Markdown' });
 }
 
+/** Send a failure notification with Retry / Restart buttons */
+export async function notifyWithRetry(message: string, jobId: string): Promise<void> {
+  const keyboard = new InlineKeyboard()
+    .text('Retry (resume)', `restart_job:${jobId}`)
+    .text('Retry (fresh)', `restart_fresh:${jobId}`);
+
+  await getBot().api.sendMessage(chatId, message, {
+    parse_mode: 'Markdown',
+    reply_markup: keyboard,
+  });
+}
+
 /** Ask a question and wait for a free-text reply */
-export async function askQuestion(question: string, jobId: string): Promise<string> {
+export async function askQuestion(question: string, jobId: string, options: string[] = [], signal?: AbortSignal): Promise<string> {
   const correlationId = crypto.randomUUID();
 
   // Store pending question in Redis
@@ -33,18 +45,28 @@ export async function askQuestion(question: string, jobId: string): Promise<stri
   // Track the latest pending correlation ID for this chat
   await redis.set('cc-agent:latest-pending', correlationId, 'EX', 86400);
 
-  await getBot().api.sendMessage(chatId, `*Question:*\n${question}`, {
-    parse_mode: 'Markdown',
-  });
+  const sendOptions: any = { parse_mode: 'Markdown' };
+
+  // Render options as inline keyboard buttons if provided
+  if (options.length > 0) {
+    const keyboard = new InlineKeyboard();
+    for (const opt of options) {
+      keyboard.text(opt, `answer:${correlationId}:${opt}`);
+    }
+    sendOptions.reply_markup = keyboard;
+  }
+
+  await getBot().api.sendMessage(chatId, `*Question:*\n${question}`, sendOptions);
 
   // Wait for reply via Redis pub/sub
-  return waitForReply(correlationId);
+  return waitForReply(correlationId, signal);
 }
 
 /** Send plan for approval with inline keyboard buttons */
 export async function requestPlanApproval(
   plan: string,
   jobId: string,
+  signal?: AbortSignal,
 ): Promise<ApprovalResult> {
   const correlationId = crypto.randomUUID();
 
@@ -72,13 +94,13 @@ export async function requestPlanApproval(
     reply_markup: keyboard,
   });
 
-  const reply = await waitForReply(correlationId);
+  const reply = await waitForReply(correlationId, signal);
 
   if (reply.startsWith('approve:')) return { decision: 'approved' };
   if (reply.startsWith('reject:')) return { decision: 'rejected' };
   if (reply.startsWith('changes:')) {
     // Ask for feedback text
-    const feedback = await askQuestion('What changes would you like?', jobId);
+    const feedback = await askQuestion('What changes would you like?', jobId, [], signal);
     return { decision: 'changes_requested', feedback };
   }
 
@@ -120,7 +142,24 @@ export async function requestPermission(
 export async function handleTelegramReply(data: string): Promise<void> {
   const redis = getRedis();
 
+  // Handle answer buttons: "answer:<correlationId>:<selected option>"
+  if (data.startsWith('answer:')) {
+    const firstColon = data.indexOf(':');
+    const secondColon = data.indexOf(':', firstColon + 1);
+    if (secondColon !== -1) {
+      const correlationId = data.slice(firstColon + 1, secondColon);
+      const answer = data.slice(secondColon + 1);
+      const pending = await redis.get(`cc-agent:pending:${correlationId}`);
+      if (pending) {
+        await redis.del(`cc-agent:pending:${correlationId}`);
+        await redis.publish('cc-agent:replies', JSON.stringify({ correlationId, reply: answer }));
+        return;
+      }
+    }
+  }
+
   // Check if the data contains a correlation ID (from inline keyboard)
+  // Format: "action:correlationId" (approve, reject, changes, allow, deny)
   const parts = data.split(':');
   if (parts.length === 2) {
     const correlationId = parts[1]!;
@@ -142,14 +181,34 @@ export async function handleTelegramReply(data: string): Promise<void> {
 }
 
 /** Wait for a reply on a specific correlation ID via Redis pub/sub */
-function waitForReply(correlationId: string): Promise<string> {
+function waitForReply(correlationId: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const subscriber = getRedis().duplicate();
-    const timeout = setTimeout(() => {
+
+    const cleanup = () => {
       subscriber.unsubscribe('cc-agent:replies');
       subscriber.quit();
+    };
+
+    const timeout = setTimeout(() => {
+      cleanup();
       reject(new Error(`Telegram reply timeout for ${correlationId}`));
     }, 24 * 60 * 60 * 1000); // 24h
+
+    // Abort support — if the job is killed, reject immediately
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeout);
+        cleanup();
+        reject(new Error('Job killed'));
+        return;
+      }
+      signal.addEventListener('abort', () => {
+        clearTimeout(timeout);
+        cleanup();
+        reject(new Error('Job killed'));
+      }, { once: true });
+    }
 
     subscriber.subscribe('cc-agent:replies').catch((err) => {
       clearTimeout(timeout);
@@ -160,8 +219,7 @@ function waitForReply(correlationId: string): Promise<string> {
       const parsed = JSON.parse(message) as { correlationId: string; reply: string };
       if (parsed.correlationId === correlationId) {
         clearTimeout(timeout);
-        subscriber.unsubscribe('cc-agent:replies');
-        subscriber.quit();
+        cleanup();
         resolve(parsed.reply);
       }
     });

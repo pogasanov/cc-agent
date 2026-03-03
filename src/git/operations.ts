@@ -14,9 +14,18 @@ export function initGit(cfg: Config): void {
   octokit = new Octokit({ auth: config.GITHUB_TOKEN });
 }
 
-/** Create a branch from latest main */
+/** Create a branch from latest main, or check out existing one */
 export async function createBranch(branchName: string): Promise<void> {
   await git.fetch('origin', 'main');
+
+  // Check if the local branch already exists
+  const branches = await git.branchLocal();
+  if (branches.all.includes(branchName)) {
+    await git.checkout(branchName);
+    logger.info(`Checked out existing branch ${branchName}`);
+    return;
+  }
+
   await git.checkoutBranch(branchName, 'origin/main');
   logger.info(`Created branch ${branchName}`);
 }

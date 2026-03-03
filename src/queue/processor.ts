@@ -5,7 +5,7 @@ import {
   markInProgress,
   markDone,
 } from '../linear/client.js';
-import { notify, requestPlanApproval, askQuestion } from '../telegram/bridge.js';
+import { notify, notifyWithRetry, requestPlanApproval, askQuestion } from '../telegram/bridge.js';
 import { runPlanPhase, runImplPhase } from '../claude/executor.js';
 import {
   createBranch,
@@ -14,21 +14,34 @@ import {
   remoteBranchExists,
   checkCIStatus,
 } from '../git/operations.js';
-import { getRedis } from './setup.js';
+import { getRedis, getAbortSignal, clearAbort } from './setup.js';
 import { logger } from '../logger.js';
 
 const MAX_PLAN_RETRIES = 3;
 const CI_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+class JobKilledError extends Error {
+  constructor() { super('Job killed'); this.name = 'JobKilledError'; }
+}
+
+function checkAbort(signal: AbortSignal): void {
+  if (signal.aborted) throw new JobKilledError();
+}
+
 /** Main job processor — orchestrates the full lifecycle */
 export async function processJob(job: Job<JobData>): Promise<void> {
   const data = job.data;
+  const signal = getAbortSignal(job.id!);
 
   try {
+    checkAbort(signal);
+
     // If this is a fresh job, fetch issue details first
     if (!data.issueIdentifier) {
       await setupJob(job);
     }
+
+    checkAbort(signal);
 
     // Resume from the current phase
     switch (data.phase) {
@@ -52,9 +65,18 @@ export async function processJob(job: Job<JobData>): Promise<void> {
         break;
     }
   } catch (err) {
+    if (err instanceof JobKilledError) {
+      logger.info(`Job ${job.id} was killed`);
+      return; // Don't retry
+    }
     logger.error(`Job ${job.id} failed in ${data.phase} phase: ${err}`);
-    await notify(`Error processing ${data.issueIdentifier || data.linearIssueId}: ${err}`);
+    await notifyWithRetry(
+      `Error in ${data.issueIdentifier || data.linearIssueId} (${data.phase}): ${err}`,
+      job.id!,
+    );
     throw err; // Let BullMQ handle the retry
+  } finally {
+    clearAbort(job.id!);
   }
 }
 
@@ -100,14 +122,18 @@ async function planPhase(job: Job<JobData>): Promise<void> {
     phase: 'approval',
   });
 
+  checkAbort(getAbortSignal(job.id!));
   await approvalPhase(job);
 }
 
 async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
   const data = job.data;
+  checkAbort(getAbortSignal(job.id!));
   logger.info(`[${data.issueIdentifier}] Approval phase (job ${job.id})`);
 
-  const approval = await requestPlanApproval(data.planText ?? '(no plan text)', job.id!);
+  const signal = getAbortSignal(job.id!);
+  const approval = await requestPlanApproval(data.planText ?? '(no plan text)', job.id!, signal);
+  checkAbort(getAbortSignal(job.id!));
 
   if (approval.decision === 'approved') {
     await job.updateData({ ...job.data, phase: 'implement' });
@@ -144,6 +170,7 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
       phase: 'approval',
     });
 
+    checkAbort(getAbortSignal(job.id!));
     await approvalPhase(job, retryCount + 1);
   }
 }
@@ -164,6 +191,7 @@ async function implementPhase(job: Job<JobData>): Promise<void> {
     phase: 'push',
   });
 
+  checkAbort(getAbortSignal(job.id!));
   await pushPhase(job);
 }
 
@@ -195,6 +223,7 @@ async function pushPhase(job: Job<JobData>): Promise<void> {
 
   await notify(`PR created for ${data.issueIdentifier}: ${prUrl}\nWaiting for CI...`);
 
+  checkAbort(getAbortSignal(job.id!));
   await ciWaitPhase(job);
 }
 

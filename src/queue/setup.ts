@@ -9,6 +9,22 @@ let queue: Queue<JobData>;
 let worker: Worker<JobData>;
 let redis: Redis;
 
+/** AbortControllers for active jobs — kill signals the controller */
+const activeAborts = new Map<string, AbortController>();
+
+export function getAbortSignal(jobId: string): AbortSignal {
+  let ctrl = activeAborts.get(jobId);
+  if (!ctrl) {
+    ctrl = new AbortController();
+    activeAborts.set(jobId, ctrl);
+  }
+  return ctrl.signal;
+}
+
+export function clearAbort(jobId: string): void {
+  activeAborts.delete(jobId);
+}
+
 export function getRedis(): Redis {
   return redis;
 }
@@ -17,10 +33,13 @@ export function getQueue(): Queue<JobData> {
   return queue;
 }
 
+let connection: { host: string; port: number };
+
+/** Initialize Redis + queue only (no worker yet) */
 export function initQueue(config: Config): void {
   const redisUrl = new URL(config.REDIS_URL);
 
-  const connection = {
+  connection = {
     host: redisUrl.hostname,
     port: Number(redisUrl.port) || 6379,
   };
@@ -42,9 +61,14 @@ export function initQueue(config: Config): void {
     },
   });
 
+  logger.info('BullMQ queue initialized');
+}
+
+/** Start the worker — call this AFTER recovery */
+export function startWorker(): void {
   worker = new Worker<JobData>('cc-agent-jobs', processJob, {
     connection,
-    concurrency: 1, // Process one issue at a time
+    concurrency: 1,
     stalledInterval: 30_000,
   });
 
@@ -60,7 +84,39 @@ export function initQueue(config: Config): void {
     logger.warn(`Job ${jobId} stalled — will be retried`);
   });
 
-  logger.info('BullMQ queue and worker initialized');
+  logger.info('BullMQ worker started');
+}
+
+/**
+ * Recover jobs that were active when the daemon last crashed.
+ * Clears stale locks directly in Redis, then re-enqueues.
+ */
+export async function recoverStalledJobs(): Promise<void> {
+  const active = await queue.getJobs(['active']);
+  const failed = await queue.getJobs(['failed']);
+
+  for (const job of [...active, ...failed]) {
+    if (!job) continue;
+    const id = job.data.issueIdentifier || job.data.linearIssueId;
+    logger.info(`Recovering stuck job ${job.id} (${id}, phase=${job.data.phase})`);
+
+    const data = { ...job.data };
+    const jobId = job.id!;
+
+    // Force-remove the lock and job directly from Redis
+    await redis.del(`bull:cc-agent-jobs:${jobId}:lock`);
+    try {
+      await job.remove();
+    } catch {
+      // If remove still fails, delete the Redis keys manually
+      await redis.del(`bull:cc-agent-jobs:${jobId}`);
+      await redis.lrem('bull:cc-agent-jobs:active', 0, jobId);
+      await redis.lrem('bull:cc-agent-jobs:failed', 0, jobId);
+    }
+
+    await queue.add('execute-issue', data, { jobId });
+    logger.info(`Re-enqueued job ${jobId} (${id}) in phase ${data.phase}`);
+  }
 }
 
 /** Enqueue a new issue for processing */
@@ -98,6 +154,76 @@ export async function resolveCIWait(headSha: string, conclusion: string): Promis
     'cc-agent:ci-results',
     JSON.stringify({ headSha, conclusion }),
   );
+}
+
+/** Force-kill a job — abort in-flight execution and remove from queue */
+export async function killJob(jobId: string): Promise<boolean> {
+  // Abort the in-flight processor if running
+  const ctrl = activeAborts.get(jobId);
+  if (ctrl) {
+    ctrl.abort();
+    activeAborts.delete(jobId);
+  }
+
+  const job = await queue.getJob(jobId);
+  if (!job && !ctrl) return false;
+
+  if (job) {
+    await redis.del(`bull:cc-agent-jobs:${jobId}:lock`);
+    try {
+      await job.remove();
+    } catch {
+      await redis.del(`bull:cc-agent-jobs:${jobId}`);
+      await redis.lrem('bull:cc-agent-jobs:active', 0, jobId);
+      await redis.lrem('bull:cc-agent-jobs:waiting', 0, jobId);
+      await redis.lrem('bull:cc-agent-jobs:delayed', 0, jobId);
+      await redis.lrem('bull:cc-agent-jobs:failed', 0, jobId);
+    }
+  }
+
+  logger.info(`Killed job ${jobId}`);
+  return true;
+}
+
+/** Restart a job — remove it and re-enqueue from its current phase */
+export async function restartJob(jobId: string): Promise<boolean> {
+  const job = await queue.getJob(jobId);
+  if (!job) return false;
+
+  const data = { ...job.data };
+  await job.remove();
+  await queue.add('execute-issue', data, { jobId });
+  logger.info(`Restarted job ${jobId} in phase ${data.phase}`);
+  return true;
+}
+
+/** Restart a job from scratch (reset to plan phase) */
+export async function restartJobFresh(jobId: string): Promise<boolean> {
+  const job = await queue.getJob(jobId);
+  if (!job) return false;
+
+  const data = { ...job.data, phase: 'plan' as const, planSessionId: undefined, implSessionId: undefined, planText: undefined };
+  await job.remove();
+  await queue.add('execute-issue', data, { jobId });
+  logger.info(`Restarted job ${jobId} from scratch`);
+  return true;
+}
+
+/** Get all jobs for display */
+export async function listJobs(): Promise<Array<{ id: string; state: string; identifier: string; phase: string }>> {
+  const jobs = await queue.getJobs(['active', 'waiting', 'delayed', 'failed']);
+  const result = [];
+  for (const job of jobs) {
+    if (!job) continue;
+    const state = await job.getState();
+    result.push({
+      id: job.id!,
+      state,
+      identifier: job.data.issueIdentifier || job.data.linearIssueId,
+      phase: job.data.phase,
+    });
+  }
+  return result;
 }
 
 export async function closeQueue(): Promise<void> {
