@@ -129,9 +129,18 @@ async function planPhase(job: Job<JobData>): Promise<void> {
   const taskLabel = currentTaskLabel(data);
   logger.info(`[${taskLabel}] Plan phase (job ${job.id})`);
 
-  // Mark current sub-issue as in progress
+  // Ask for confirmation before starting a sub-issue
   const currentSub = data.subIssues[data.currentSubIssueIndex];
   if (currentSub) {
+    const answer = await askQuestion(
+      `Start sub-issue *${currentSub.identifier}* — ${currentSub.title}?`,
+      job.id!,
+      ['Yes', 'No'],
+    );
+    if (!answer.toLowerCase().startsWith('y')) {
+      await notify(`Paused before ${currentSub.identifier}. Use /restart to resume later.`);
+      return;
+    }
     await markInProgress(currentSub.id);
   }
 
@@ -317,9 +326,18 @@ async function markDonePhase(job: Job<JobData>): Promise<void> {
 
   const nextIndex = data.currentSubIssueIndex + 1;
   if (nextIndex < data.subIssues.length) {
-    // More sub-issues — advance and restart the cycle
+    // More sub-issues — ask before continuing
     const nextSub = data.subIssues[nextIndex]!;
-    await notify(`Completed ${taskLabel}. Moving to next: *${nextSub.identifier}* — ${nextSub.title}`);
+    const answer = await askQuestion(
+      `Completed *${taskLabel}*. Continue to next sub-issue *${nextSub.identifier}* — ${nextSub.title}?`,
+      job.id!,
+      ['Yes', 'No'],
+    );
+
+    if (!answer.toLowerCase().startsWith('y')) {
+      await notify(`Paused after ${taskLabel}. Use /restart to resume later.`);
+      return;
+    }
 
     await job.updateData({
       ...job.data,
