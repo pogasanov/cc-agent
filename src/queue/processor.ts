@@ -14,7 +14,7 @@ import {
   remoteBranchExists,
   checkCIStatus,
 } from '../git/operations.js';
-import { getRedis, getAbortSignal, clearAbort } from './setup.js';
+import { getRedis, getAbortSignal, clearAbort, isShuttingDown } from './setup.js';
 import { logger } from '../logger.js';
 
 const MAX_PLAN_RETRIES = 3;
@@ -66,8 +66,12 @@ export async function processJob(job: Job<JobData>): Promise<void> {
     }
   } catch (err) {
     if (err instanceof JobKilledError) {
+      if (isShuttingDown()) {
+        logger.info(`Job ${job.id} interrupted by shutdown — will resume on restart`);
+        throw err; // Let BullMQ mark as failed so recoverStalledJobs picks it up
+      }
       logger.info(`Job ${job.id} was killed`);
-      return; // Don't retry
+      return; // User-initiated kill — don't retry
     }
     logger.error(`Job ${job.id} failed in ${data.phase} phase: ${err}`);
     await notifyWithRetry(

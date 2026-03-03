@@ -13,6 +13,10 @@ let redis: Redis;
 const activeAborts = new Map<string, AbortController>();
 let shuttingDown = false;
 
+export function isShuttingDown(): boolean {
+  return shuttingDown;
+}
+
 export function getAbortSignal(jobId: string): AbortSignal {
   if (shuttingDown) {
     return AbortSignal.abort();
@@ -98,8 +102,9 @@ export function startWorker(): void {
 export async function recoverStalledJobs(): Promise<void> {
   const active = await queue.getJobs(['active']);
   const failed = await queue.getJobs(['failed']);
+  const delayed = await queue.getJobs(['delayed']);
 
-  for (const job of [...active, ...failed]) {
+  for (const job of [...active, ...failed, ...delayed]) {
     if (!job) continue;
     const id = job.data.issueIdentifier || job.data.linearIssueId;
     logger.info(`Recovering stuck job ${job.id} (${id}, phase=${job.data.phase})`);
@@ -116,6 +121,7 @@ export async function recoverStalledJobs(): Promise<void> {
       await redis.del(`bull:cc-agent-jobs:${jobId}`);
       await redis.lrem('bull:cc-agent-jobs:active', 0, jobId);
       await redis.lrem('bull:cc-agent-jobs:failed', 0, jobId);
+      await redis.zrem('bull:cc-agent-jobs:delayed', jobId);
     }
 
     await queue.add('execute-issue', data, { jobId });
@@ -133,6 +139,8 @@ export async function enqueueIssue(issueId: string): Promise<void> {
       logger.info(`Job for issue ${issueId} already exists (${state}), skipping`);
       return;
     }
+    // Remove stale completed/failed job so we can re-use the jobId
+    try { await existing.remove(); } catch { /* already gone */ }
   }
 
   await queue.add(
