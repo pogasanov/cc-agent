@@ -119,6 +119,14 @@ async function setupJob(job: Job<JobData>): Promise<void> {
     `Starting on *${issue.identifier}*: ${issue.title}` +
       (subCount > 0 ? ` (${subCount} sub-issues)` : ''),
   );
+
+  const answer = await askQuestion(
+    `*${issue.identifier}*: Auto accept all or manual?`,
+    job.id!,
+    ['Auto', 'Manual'],
+  );
+  const autoAccept = answer.toLowerCase().startsWith('auto') || answer.toLowerCase() === 'auto';
+  await job.updateData({ ...job.data, autoAccept });
 }
 
 /** Get the task description to feed to Claude — sub-issue text only, or main issue if no sub-issues */
@@ -137,17 +145,21 @@ async function planPhase(job: Job<JobData>): Promise<void> {
   const taskLabel = currentTaskLabel(data);
   logger.info(`[${taskLabel}] Plan phase (job ${job.id})`);
 
-  // Ask for confirmation before starting a sub-issue
+  // Ask for confirmation before starting a sub-issue (skip if autoAccept)
   const currentSub = data.subIssues[data.currentSubIssueIndex];
   if (currentSub) {
-    const answer = await askQuestion(
-      `Start sub-issue *${currentSub.identifier}* — ${currentSub.title}?`,
-      job.id!,
-      ['Yes', 'No'],
-    );
-    if (!answer.toLowerCase().startsWith('y')) {
-      await notify(`Paused before ${currentSub.identifier}. Use /restart to resume later.`);
-      return;
+    if (data.autoAccept) {
+      await notify(`Auto-starting sub-issue *${currentSub.identifier}* — ${currentSub.title}`);
+    } else {
+      const answer = await askQuestion(
+        `Start sub-issue *${currentSub.identifier}* — ${currentSub.title}?`,
+        job.id!,
+        ['Yes', 'No'],
+      );
+      if (!answer.toLowerCase().startsWith('y')) {
+        await notify(`Paused before ${currentSub.identifier}. Use /restart to resume later.`);
+        return;
+      }
     }
     await markInProgress(currentSub.id);
   }
@@ -178,6 +190,17 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
   const data = job.data;
   checkAbort(getAbortSignal(job.id!));
   logger.info(`[${data.issueIdentifier}] Approval phase (job ${job.id})`);
+
+  if (data.autoAccept) {
+    const maxLen = 3800;
+    const truncated = (data.planText ?? '').length > maxLen
+      ? (data.planText ?? '').slice(0, maxLen) + '\n...(truncated)'
+      : (data.planText ?? '(no plan text)');
+    await notify(`*Plan (auto-approved):*\n\n${truncated}`);
+    await job.updateData({ ...job.data, phase: 'implement' });
+    await implementPhase(job);
+    return;
+  }
 
   const signal = getAbortSignal(job.id!);
   const approval = await requestPlanApproval(data.planText ?? '(no plan text)', job.id!, signal);

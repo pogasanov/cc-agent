@@ -31,6 +31,7 @@ export interface JobData {
   prNumber?: number;
   headSha?: string;
   validateAttempt?: number;
+  autoAccept?: boolean;
   phase: JobPhase;
 }
 
