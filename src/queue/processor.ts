@@ -332,6 +332,11 @@ async function pushPhase(job: Job<JobData>): Promise<void> {
     data.currentSubIssueIndex >= data.subIssues.length - 1;
 
   if (isLastSubIssue) {
+    // Mark current sub-issue done before marking PR ready
+    const currentSub = data.subIssues[data.currentSubIssueIndex];
+    const targetIssueId = currentSub?.id ?? data.linearIssueId;
+    await markDone(targetIssueId);
+
     await markPRReady(prNumber);
 
     await job.updateData({
@@ -443,9 +448,6 @@ async function markDonePhase(job: Job<JobData>): Promise<void> {
     // All sub-issues done (or no sub-issues) — mark main issue done too if we had sub-issues
     if (data.subIssues.length > 0) {
       await markDone(data.linearIssueId);
-    }
-    if (data.prNumber) {
-      await markPRReady(data.prNumber);
     }
     await notify(`${data.issueIdentifier} fully completed! Branch: \`${data.branchName}\``);
   }
