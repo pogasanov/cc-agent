@@ -38,9 +38,9 @@ export function registerLinearWebhook(server: FastifyInstance, config: Config): 
       return;
     }
 
-    // Check if state transitioned to the target state (Todo / unstarted)
-    const stateChanged = payload.updatedFrom?.stateId !== undefined;
-    if (!stateChanged) return;
+    // Only enqueue when state changed TO "Todo" (unstarted)
+    const newStateType: string | undefined = (payload.data as any)?.state?.type;
+    if (newStateType !== 'unstarted') return;
 
     const issueId = payload.data.id as string;
     logger.info(`Linear webhook: enqueuing issue ${issueId}`);
