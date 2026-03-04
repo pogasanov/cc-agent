@@ -67,6 +67,6 @@ export interface LinearIssueData {
 
 /** GitHub check suite status */
 export interface CIStatus {
-  conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'timed_out' | 'action_required' | null;
+  conclusion: 'success' | 'failure' | 'pending' | 'neutral' | 'cancelled' | 'timed_out' | 'action_required' | null;
   failedChecks: string[];
 }

@@ -17,7 +17,7 @@ import {
   checkCIStatus,
   markPRReady,
 } from '../git/operations.js';
-import { getRedis, getAbortSignal, clearAbort, isShuttingDown, getRepoPath } from './setup.js';
+import { getAbortSignal, clearAbort, isShuttingDown, getRepoPath } from './setup.js';
 import { logger } from '../logger.js';
 
 const MAX_PLAN_RETRIES = 3;
@@ -369,52 +369,52 @@ async function ciWaitPhase(job: Job<JobData>): Promise<void> {
   const data = job.data;
   logger.info(`[${data.issueIdentifier}] CI wait phase (job ${job.id})`);
 
-  const redis = getRedis();
-  const subscriber = redis.duplicate();
+  const POLL_INTERVAL_MS = 30_000;
+  const startTime = Date.now();
 
-  try {
-    const result = await Promise.race([
-      waitForCIWebhook(subscriber, data.headSha!),
-      waitTimeout(CI_TIMEOUT_MS),
-    ]);
+  // Initial delay to let deployment checks register
+  await sleep(POLL_INTERVAL_MS);
 
-    if (result === 'timeout') {
-      // Fallback: poll GitHub Checks API
-      logger.info(`CI timeout for job ${job.id} — polling GitHub Checks API`);
-      const status = await checkCIStatus(data.headSha!);
+  while (Date.now() - startTime < CI_TIMEOUT_MS) {
+    checkAbort(getAbortSignal(job.id!));
 
-      if (status.conclusion === null) {
-        // No CI configured — ask Telegram
-        const answer = await askQuestion(
-          `No CI detected for ${data.issueIdentifier}. Mark done anyway? (yes/no)`,
-          job.id!,
-        );
-        if (answer.toLowerCase().startsWith('y')) {
-          await job.updateData({ ...job.data, phase: 'mark_done' });
-          await markDonePhase(job);
-          return;
-        }
-        await notify(`${data.issueIdentifier} left in CI wait state.`);
+    const status = await checkCIStatus(data.headSha!);
+
+    if (status.conclusion === null) {
+      const answer = await askQuestion(
+        `No CI detected for ${data.issueIdentifier}. Mark done anyway? (yes/no)`,
+        job.id!,
+      );
+      if (answer.toLowerCase().startsWith('y')) {
+        await job.updateData({ ...job.data, phase: 'mark_done' });
+        await markDonePhase(job);
         return;
       }
-
-      if (status.conclusion !== 'success') {
-        await notify(
-          `CI failed for ${data.issueIdentifier}. Failed checks: ${status.failedChecks.join(', ')}`,
-        );
-        throw new Error(`CI failed: ${status.failedChecks.join(', ')}`);
-      }
-    } else if (result === 'failure') {
-      await notify(`CI failed for ${data.issueIdentifier}.`);
-      throw new Error('CI check_suite failed');
+      await notify(`${data.issueIdentifier} left in CI wait state.`);
+      return;
     }
 
-    // CI passed
-    await job.updateData({ ...job.data, phase: 'mark_done' });
-    await markDonePhase(job);
-  } finally {
-    await subscriber.quit();
+    if (status.conclusion === 'success') {
+      logger.info(`[${data.issueIdentifier}] All CI checks passed`);
+      await job.updateData({ ...job.data, phase: 'mark_done' });
+      await markDonePhase(job);
+      return;
+    }
+
+    if (status.conclusion === 'failure') {
+      await notify(
+        `CI failed for ${data.issueIdentifier}. Failed checks: ${status.failedChecks.join(', ')}`,
+      );
+      throw new Error(`CI failed: ${status.failedChecks.join(', ')}`);
+    }
+
+    // Still pending — wait and poll again
+    logger.info(`[${data.issueIdentifier}] CI checks still in progress, polling again in 30s`);
+    await sleep(POLL_INTERVAL_MS);
   }
+
+  // Timeout
+  throw new Error(`CI timed out after ${CI_TIMEOUT_MS / 60_000} minutes for ${data.issueIdentifier}`);
 }
 
 async function markDonePhase(job: Job<JobData>): Promise<void> {
@@ -461,27 +461,8 @@ function currentTaskLabel(data: JobData): string {
   return sub?.identifier ?? data.issueIdentifier;
 }
 
-function waitForCIWebhook(
-  subscriber: ReturnType<typeof getRedis>,
-  headSha: string,
-): Promise<'success' | 'failure'> {
-  return new Promise((resolve, reject) => {
-    subscriber.subscribe('cc-agent:ci-results').catch((err) => {
-      reject(err);
-    });
-
-    subscriber.on('message', (_channel: string, message: string) => {
-      const parsed = JSON.parse(message) as { headSha: string; conclusion: string };
-      if (parsed.headSha === headSha) {
-        subscriber.unsubscribe('cc-agent:ci-results');
-        resolve(parsed.conclusion === 'success' ? 'success' : 'failure');
-      }
-    });
-  });
-}
-
-function waitTimeout(ms: number): Promise<'timeout'> {
-  return new Promise((resolve) => setTimeout(() => resolve('timeout'), ms));
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function slugify(text: string): string {

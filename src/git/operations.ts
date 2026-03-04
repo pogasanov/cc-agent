@@ -99,7 +99,7 @@ export async function markPRReady(prNumber: number): Promise<void> {
   logger.info(`PR #${prNumber} marked as ready for review`);
 }
 
-/** Poll GitHub Checks API for CI status (fallback) */
+/** Poll GitHub Checks API for CI status */
 export async function checkCIStatus(ref: string): Promise<CIStatus> {
   const { data } = await octokit.rest.checks.listForRef({
     owner: config.GITHUB_OWNER,
@@ -111,16 +111,19 @@ export async function checkCIStatus(ref: string): Promise<CIStatus> {
     return { conclusion: null, failedChecks: [] };
   }
 
+  // If any check is still running, overall status is pending
+  const hasInProgress = data.check_runs.some((run) => run.status !== 'completed');
+  if (hasInProgress) {
+    return { conclusion: 'pending', failedChecks: [] };
+  }
+
+  // All checks completed — check for failures
   const failedChecks = data.check_runs
-    .filter((run) => run.conclusion !== 'success' && run.conclusion !== null)
+    .filter((run) => run.conclusion !== 'success' && run.conclusion !== 'neutral')
     .map((run) => run.name);
 
-  const allPassed = data.check_runs.every(
-    (run) => run.conclusion === 'success' || run.conclusion === 'neutral',
-  );
-
   return {
-    conclusion: allPassed ? 'success' : 'failure',
+    conclusion: failedChecks.length === 0 ? 'success' : 'failure',
     failedChecks,
   };
 }
