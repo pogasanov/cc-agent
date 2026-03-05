@@ -26,16 +26,16 @@ function useTerminalSize() {
 
 export function App(): ReactElement {
   const { width, height } = useTerminalSize();
-  const contentHeight = height - 2; // reserve 2 rows for input + status bar
+  const contentHeight = height - 2; // reserve 2 rows for input + status bar (borders are inside the box heights)
   const logsHeight = Math.floor(contentHeight * 0.6);
   const jobsHeight = contentHeight - logsHeight;
 
   return (
     <Box flexDirection="column" width={width} height={height}>
-      <Box height={logsHeight} flexDirection="column" overflowX="hidden">
+      <Box height={logsHeight} flexDirection="column" overflowX="hidden" borderStyle="single" borderColor="gray">
         <LogStream />
       </Box>
-      <Box height={jobsHeight} flexDirection="column" overflowX="hidden">
+      <Box height={jobsHeight} flexDirection="column" overflowX="hidden" borderStyle="single" borderColor="gray">
         <JobList />
       </Box>
       <CommandInput />
