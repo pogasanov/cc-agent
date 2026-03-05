@@ -12,9 +12,54 @@ export function initBridge(config: Config): void {
   chatId = config.TELEGRAM_CHAT_ID;
 }
 
+/** Split text into chunks that fit within Telegram's message size limit */
+function splitMessage(text: string, maxLen: number): string[] {
+  if (text.length <= maxLen) return [text];
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+    // Try to split at last newline within limit
+    let splitAt = remaining.lastIndexOf('\n', maxLen);
+    if (splitAt <= 0) splitAt = maxLen;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, '');
+  }
+  return chunks;
+}
+
+/** Send a long message split across multiple Telegram messages */
+export async function sendLong(message: string): Promise<void> {
+  const chunks = splitMessage(message, 3800);
+  for (const chunk of chunks) {
+    await safeSend(chunk);
+  }
+}
+
+/** Send a message with Markdown, falling back to plain text if parsing fails */
+async function safeSend(
+  text: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await getBot().api.sendMessage(chatId, text, { parse_mode: 'Markdown', ...extra });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes("can't parse entities")) {
+      // Strip Markdown and retry as plain text
+      const { parse_mode: _, ...rest } = { parse_mode: 'Markdown', ...extra };
+      await getBot().api.sendMessage(chatId, text, rest);
+    } else {
+      throw err;
+    }
+  }
+}
+
 /** Send a plain notification (no reply expected) */
 export async function notify(message: string): Promise<void> {
-  await getBot().api.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  await safeSend(message);
 }
 
 /** Send a failure notification with Retry / Restart buttons */
@@ -23,10 +68,7 @@ export async function notifyWithRetry(message: string, jobId: string): Promise<v
     .text('Retry (resume)', `restart_job:${jobId}`)
     .text('Retry (fresh)', `restart_fresh:${jobId}`);
 
-  await getBot().api.sendMessage(chatId, message, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard,
-  });
+  await safeSend(message, { reply_markup: keyboard });
 }
 
 /** Ask a question and wait for a free-text reply */
@@ -45,7 +87,7 @@ export async function askQuestion(question: string, jobId: string, options: stri
   // Track the latest pending correlation ID for this chat
   await redis.set('cc-agent:latest-pending', correlationId, 'EX', 86400);
 
-  const sendOptions: any = { parse_mode: 'Markdown' };
+  const sendOptions: Record<string, unknown> = {};
 
   // Render options as inline keyboard buttons if provided
   if (options.length > 0) {
@@ -56,7 +98,7 @@ export async function askQuestion(question: string, jobId: string, options: stri
     sendOptions.reply_markup = keyboard;
   }
 
-  await getBot().api.sendMessage(chatId, `*Question:*\n${question}`, sendOptions);
+  await safeSend(`*Question:*\n${question}`, sendOptions);
 
   // Wait for reply via Redis pub/sub
   return waitForReply(correlationId, signal);
@@ -85,14 +127,15 @@ export async function requestPlanApproval(
     .row()
     .text('Request Changes', `changes:${correlationId}`);
 
-  // Truncate plan if too long for Telegram (4096 char limit)
-  const maxLen = 3800;
-  const truncatedPlan = plan.length > maxLen ? plan.slice(0, maxLen) + '\n...(truncated)' : plan;
-
-  await getBot().api.sendMessage(chatId, `*Plan for review:*\n\n${truncatedPlan}`, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard,
-  });
+  // Split plan into chunks that fit Telegram's 4096 char limit
+  const chunks = splitMessage(plan, 3800);
+  for (let i = 0; i < chunks.length; i++) {
+    const isFirst = i === 0;
+    const isLast = i === chunks.length - 1;
+    const prefix = isFirst ? '*Plan for review:*\n\n' : '';
+    const extra: Record<string, unknown> = isLast ? { reply_markup: keyboard } : {};
+    await safeSend(`${prefix}${chunks[i]}`, extra);
+  }
 
   const reply = await waitForReply(correlationId, signal);
 
@@ -128,10 +171,9 @@ export async function requestPermission(
     .text('Allow', `allow:${correlationId}`)
     .text('Deny', `deny:${correlationId}`);
 
-  await getBot().api.sendMessage(
-    chatId,
+  await safeSend(
     `*Permission requested:*\n\`\`\`\n${command}\n\`\`\`\nAllow this command?`,
-    { parse_mode: 'Markdown', reply_markup: keyboard },
+    { reply_markup: keyboard },
   );
 
   const reply = await waitForReply(correlationId);

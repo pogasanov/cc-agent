@@ -3,12 +3,13 @@ import { Box, Text, useStdout } from 'ink';
 import { JobList } from './components/JobList.js';
 import { LogStream } from './components/LogStream.js';
 import { CommandInput } from './components/CommandInput.js';
+import { StatusBar } from './components/StatusBar.js';
 
 export function App(): ReactElement {
   const { stdout } = useStdout();
   const height = stdout?.rows ?? 24;
   const width = stdout?.columns ?? 80;
-  const contentHeight = height - 1; // reserve 1 row for input
+  const contentHeight = height - 2; // reserve 2 rows for input + status bar
   const leftWidth = Math.floor(width / 2);
 
   return (
@@ -27,6 +28,7 @@ export function App(): ReactElement {
         </Box>
       </Box>
       <CommandInput />
+      <StatusBar />
     </Box>
   );
 }

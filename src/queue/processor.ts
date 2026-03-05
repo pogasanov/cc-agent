@@ -5,7 +5,7 @@ import {
   markInProgress,
   markDone,
 } from '../linear/client.js';
-import { notify, notifyWithRetry, requestPlanApproval, askQuestion } from '../telegram/bridge.js';
+import { notify, notifyWithRetry, requestPlanApproval, askQuestion, sendLong } from '../telegram/bridge.js';
 import { runPlanPhase, runImplPhase, runFixPhase } from '../claude/executor.js';
 import { runValidation, formatValidationErrors } from '../validate/runner.js';
 import {
@@ -204,11 +204,7 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
   logger.info(`[${data.issueIdentifier}] Approval phase (job ${job.id})`);
 
   if (data.autoAccept) {
-    const maxLen = 3800;
-    const truncated = (data.planText ?? '').length > maxLen
-      ? (data.planText ?? '').slice(0, maxLen) + '\n...(truncated)'
-      : (data.planText ?? '(no plan text)');
-    await notify(`*Plan (auto-approved):*\n\n${truncated}`);
+    await sendLong(`*Plan (auto-approved):*\n\n${data.planText ?? '(no plan text)'}`);
     await job.updateData({ ...job.data, phase: 'implement' });
     dashboardStore.updatePhase('implement');
     await implementPhase(job);

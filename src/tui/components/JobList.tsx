@@ -10,10 +10,6 @@ function formatElapsed(startedAt: number): string {
   return `${mins}m${rem}s`;
 }
 
-function formatCost(usd: number): string {
-  return `$${usd.toFixed(4)}`;
-}
-
 // Column widths
 const COL = { id: 3, identifier: 12, phase: 12, status: 10 } as const;
 
@@ -38,18 +34,13 @@ function ActiveRow({ job, index }: { job: ActiveJob; index: number }): ReactElem
   }, []);
 
   return (
-    <>
-      <Box>
-        <Box width={COL.id}><Text bold color="green">{index}</Text></Box>
-        <Box width={COL.identifier}><Text bold>{job.identifier}</Text></Box>
-        <Box width={COL.phase}><Text color="green">{job.phase}</Text></Box>
-        <Box width={COL.status}><Text color="green">{formatElapsed(job.startedAt)}</Text></Box>
-        <Box flexGrow={1}><Text>{job.title}</Text></Box>
-      </Box>
-      <Box paddingLeft={COL.id}>
-        <Text dimColor>IN:{job.inputTokens.toLocaleString()} OUT:{job.outputTokens.toLocaleString()} {formatCost(job.costUSD)}</Text>
-      </Box>
-    </>
+    <Box>
+      <Box width={COL.id}><Text bold color="green">{index}</Text></Box>
+      <Box width={COL.identifier}><Text bold>{job.identifier}</Text></Box>
+      <Box width={COL.phase}><Text color="green">{job.phase}</Text></Box>
+      <Box width={COL.status}><Text color="green">{formatElapsed(job.startedAt)}</Text></Box>
+      <Box flexGrow={1}><Text>{job.title}</Text></Box>
+    </Box>
   );
 }
 
