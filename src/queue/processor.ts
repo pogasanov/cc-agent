@@ -394,7 +394,7 @@ async function ciWaitPhase(job: Job<JobData>): Promise<void> {
   const startTime = Date.now();
 
   // Initial delay to let deployment checks register
-  await sleep(POLL_INTERVAL_MS);
+  await sleep(POLL_INTERVAL_MS, getAbortSignal(job.id!));
 
   while (Date.now() - startTime < CI_TIMEOUT_MS) {
     checkAbort(getAbortSignal(job.id!));
@@ -431,7 +431,7 @@ async function ciWaitPhase(job: Job<JobData>): Promise<void> {
 
     // Still pending — wait and poll again
     logger.info(`[${data.issueIdentifier}] CI checks still in progress, polling again in 30s`);
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(POLL_INTERVAL_MS, getAbortSignal(job.id!));
   }
 
   // Timeout
@@ -483,8 +483,12 @@ function currentTaskLabel(data: JobData): string {
   return sub?.identifier ?? data.issueIdentifier;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new JobKilledError()); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new JobKilledError()); }, { once: true });
+  });
 }
 
 function slugify(text: string): string {
