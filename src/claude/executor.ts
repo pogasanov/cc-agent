@@ -95,6 +95,10 @@ function formatWait(ms: number): string {
 export interface ClaudeResult {
   sessionId: string;
   resultText: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUSD: number;
+  durationMs: number;
 }
 
 /** Run the plan phase — read-only exploration + plan generation */
@@ -223,6 +227,10 @@ interface SessionOptions {
 async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
   let sessionId = '';
   let resultText = '';
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let costUSD = 0;
+  let durationMs = 0;
   // When suppressResultNotification is set, buffer the last assistant text so we
   // can skip notifying it (it will be sent separately, e.g. with approval buttons).
   // All previous texts are flushed (notified) as new ones arrive.
@@ -275,7 +283,12 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
     }
 
     if (message.type === 'result') {
-      resultText = (message as any).result;
+      const msg = message as any;
+      resultText = msg.result;
+      inputTokens = msg.usage?.input_tokens ?? 0;
+      outputTokens = msg.usage?.output_tokens ?? 0;
+      costUSD = msg.total_cost_usd ?? 0;
+      durationMs = msg.duration_ms ?? 0;
       logger.info(`[claude] result: ${resultText.slice(0, 500)}`);
     }
   }
@@ -286,7 +299,7 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
     notify(pendingText).catch(() => {});
   }
 
-  return { sessionId: sessionId || opts.resume || '', resultText };
+  return { sessionId: sessionId || opts.resume || '', resultText, inputTokens, outputTokens, costUSD, durationMs };
 }
 
 /**

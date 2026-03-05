@@ -7,6 +7,8 @@ import { initBridge } from './telegram/bridge.js';
 import { initLinearClient } from './linear/client.js';
 import { initExecutor } from './claude/executor.js';
 import { initGit } from './git/operations.js';
+import { startTUI, stopTUI } from './tui/index.js';
+import { switchToTUI } from './logger.js';
 
 async function main(): Promise<void> {
   logger.info('cc-agent starting...');
@@ -29,6 +31,12 @@ async function main(): Promise<void> {
   // Now start the worker to process jobs
   startWorker();
 
+  // Start TUI dashboard if running in a terminal
+  if (process.stdout.isTTY) {
+    startTUI();
+    switchToTUI();
+  }
+
   logger.info('cc-agent ready');
 
   // Graceful shutdown
@@ -37,6 +45,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return; // Prevent double shutdown
     shuttingDown = true;
     logger.info(`Shutting down (${signal})...`);
+    stopTUI();
     // Stop worker first so no new processing starts
     await closeQueue();
     await server.close();

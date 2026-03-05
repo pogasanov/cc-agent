@@ -4,6 +4,7 @@ import { type Config } from '../config.js';
 import { type JobData } from '../types.js';
 import { processJob } from './processor.js';
 import { logger } from '../logger.js';
+import { dashboardStore } from '../tui/store.js';
 
 let queue: Queue<JobData>;
 let worker: Worker<JobData>;
@@ -86,16 +87,21 @@ export function startWorker(): void {
     stalledInterval: 30_000,
   });
 
+  worker.on('active', () => { refreshQueueInStore(); });
+
   worker.on('failed', (job: Job<JobData> | undefined, err: Error) => {
     logger.error(`Job ${job?.id} failed: ${err.message}`);
+    refreshQueueInStore();
   });
 
   worker.on('completed', (job: Job<JobData>) => {
     logger.info(`Job ${job.id} completed`);
+    refreshQueueInStore();
   });
 
   worker.on('stalled', (jobId: string) => {
     logger.warn(`Job ${jobId} stalled — will be retried`);
+    refreshQueueInStore();
   });
 
   logger.info('BullMQ worker started');
@@ -165,6 +171,7 @@ export async function enqueueIssue(issueId: string): Promise<void> {
   );
 
   logger.info(`Enqueued issue ${issueId}`);
+  refreshQueueInStore();
 }
 
 /** Resolve a CI wait — called by GitHub webhook handler */
@@ -183,22 +190,25 @@ export async function killJob(jobId: string): Promise<boolean> {
   if (ctrl) {
     ctrl.abort();
     activeAborts.delete(jobId);
+    // Don't force-remove from Redis — let the processor return naturally
+    // so BullMQ can clean up its lock manager timer without errors.
+    logger.info(`Killed job ${jobId}`);
+    return true;
   }
 
+  // Job is not actively processing — safe to force-remove from Redis
   const job = await queue.getJob(jobId);
-  if (!job && !ctrl) return false;
+  if (!job) return false;
 
-  if (job) {
-    await redis.del(`bull:cc-agent-jobs:${jobId}:lock`);
-    try {
-      await job.remove();
-    } catch {
-      await redis.del(`bull:cc-agent-jobs:${jobId}`);
-      await redis.lrem('bull:cc-agent-jobs:active', 0, jobId);
-      await redis.lrem('bull:cc-agent-jobs:waiting', 0, jobId);
-      await redis.lrem('bull:cc-agent-jobs:delayed', 0, jobId);
-      await redis.lrem('bull:cc-agent-jobs:failed', 0, jobId);
-    }
+  await redis.del(`bull:cc-agent-jobs:${jobId}:lock`);
+  try {
+    await job.remove();
+  } catch {
+    await redis.del(`bull:cc-agent-jobs:${jobId}`);
+    await redis.lrem('bull:cc-agent-jobs:active', 0, jobId);
+    await redis.lrem('bull:cc-agent-jobs:waiting', 0, jobId);
+    await redis.lrem('bull:cc-agent-jobs:delayed', 0, jobId);
+    await redis.lrem('bull:cc-agent-jobs:failed', 0, jobId);
   }
 
   logger.info(`Killed job ${jobId}`);
@@ -230,7 +240,7 @@ export async function restartJobFresh(jobId: string): Promise<boolean> {
 }
 
 /** Get all jobs for display */
-export async function listJobs(): Promise<Array<{ id: string; state: string; identifier: string; phase: string }>> {
+export async function listJobs(): Promise<Array<{ id: string; state: string; identifier: string; title: string; phase: string; delayedUntil?: number }>> {
   const jobs = await queue.getJobs(['active', 'waiting', 'delayed', 'failed']);
   const result = [];
   for (const job of jobs) {
@@ -240,10 +250,25 @@ export async function listJobs(): Promise<Array<{ id: string; state: string; ide
       id: job.id!,
       state,
       identifier: job.data.issueIdentifier || job.data.linearIssueId,
+      title: job.data.issueTitle ?? '',
       phase: job.data.phase,
+      delayedUntil: state === 'delayed' ? job.timestamp + job.delay : undefined,
     });
   }
   return result;
+}
+
+async function refreshQueueInStore(): Promise<void> {
+  try {
+    const jobs = await listJobs();
+    dashboardStore.refreshQueue(
+      jobs
+        .filter((j) => j.state !== 'active')
+        .map((j) => ({ jobId: j.id, identifier: j.identifier, title: j.title, state: j.state, delayedUntil: j.delayedUntil })),
+    );
+  } catch {
+    // Ignore errors during refresh — queue may not be ready yet
+  }
 }
 
 export async function closeQueue(): Promise<void> {

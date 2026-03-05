@@ -19,6 +19,7 @@ import {
 } from '../git/operations.js';
 import { getAbortSignal, clearAbort, isShuttingDown, getRepoPath } from './setup.js';
 import { logger } from '../logger.js';
+import { dashboardStore } from '../tui/store.js';
 
 const MAX_PLAN_RETRIES = 3;
 const MAX_VALIDATE_RETRIES = 3;
@@ -44,6 +45,14 @@ export async function processJob(job: Job<JobData>): Promise<void> {
     if (!data.issueIdentifier) {
       await setupJob(job);
     }
+
+    dashboardStore.setActiveJob({
+      jobId: job.id!,
+      identifier: job.data.issueIdentifier || job.data.linearIssueId,
+      title: job.data.issueTitle,
+      phase: job.data.phase,
+      startedAt: Date.now(),
+    });
 
     checkAbort(signal);
 
@@ -88,6 +97,7 @@ export async function processJob(job: Job<JobData>): Promise<void> {
     );
     throw err; // Let BullMQ handle the retry
   } finally {
+    dashboardStore.clearActiveJob();
     clearAbort(job.id!);
   }
 }
@@ -174,6 +184,7 @@ async function planPhase(job: Job<JobData>): Promise<void> {
   const taskDescription = getCurrentTaskDescription(data);
   await notify(`Prompt for *${taskLabel}*:\n\`\`\`\n${taskDescription}\n\`\`\``);
   const result = await runPlanPhase(taskDescription, job.id!, data.planSessionId);
+  dashboardStore.addTokens(result.inputTokens, result.outputTokens, result.costUSD);
 
   await job.updateData({
     ...job.data,
@@ -181,6 +192,7 @@ async function planPhase(job: Job<JobData>): Promise<void> {
     planText: result.resultText,
     phase: 'approval',
   });
+  dashboardStore.updatePhase('approval');
 
   checkAbort(getAbortSignal(job.id!));
   await approvalPhase(job);
@@ -198,6 +210,7 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
       : (data.planText ?? '(no plan text)');
     await notify(`*Plan (auto-approved):*\n\n${truncated}`);
     await job.updateData({ ...job.data, phase: 'implement' });
+    dashboardStore.updatePhase('implement');
     await implementPhase(job);
     return;
   }
@@ -208,6 +221,7 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
 
   if (approval.decision === 'approved') {
     await job.updateData({ ...job.data, phase: 'implement' });
+    dashboardStore.updatePhase('implement');
     await implementPhase(job);
     return;
   }
@@ -230,6 +244,7 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
     const taskDescription = getCurrentTaskDescription(data);
     const feedbackPrompt = `${taskDescription}\n\n## Feedback on previous plan\n${approval.feedback}`;
     const result = await runPlanPhase(feedbackPrompt, job.id!, data.planSessionId);
+    dashboardStore.addTokens(result.inputTokens, result.outputTokens, result.costUSD);
 
     await job.updateData({
       ...job.data,
@@ -237,6 +252,7 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
       planText: result.resultText,
       phase: 'approval',
     });
+    dashboardStore.updatePhase('approval');
 
     checkAbort(getAbortSignal(job.id!));
     await approvalPhase(job, retryCount + 1);
@@ -252,6 +268,7 @@ async function implementPhase(job: Job<JobData>): Promise<void> {
     job.id!,
     data.implSessionId,
   );
+  dashboardStore.addTokens(result.inputTokens, result.outputTokens, result.costUSD);
 
   await job.updateData({
     ...job.data,
@@ -259,6 +276,7 @@ async function implementPhase(job: Job<JobData>): Promise<void> {
     validateAttempt: 0,
     phase: 'validate',
   });
+  dashboardStore.updatePhase('validate');
 
   checkAbort(getAbortSignal(job.id!));
   await validatePhase(job);
@@ -279,6 +297,7 @@ async function validatePhase(job: Job<JobData>): Promise<void> {
     await notify(`Validation passed for *${taskLabel}*`);
 
     await job.updateData({ ...job.data, phase: 'push' });
+    dashboardStore.updatePhase('push');
     checkAbort(getAbortSignal(job.id!));
     await pushPhase(job);
     return;
@@ -297,6 +316,7 @@ async function validatePhase(job: Job<JobData>): Promise<void> {
   // Send errors to Claude to fix
   logger.info(`[${taskLabel}] Sending validation errors to Claude for fixing`);
   const fixResult = await runFixPhase(data.implSessionId!, errorSummary, job.id!);
+  dashboardStore.addTokens(fixResult.inputTokens, fixResult.outputTokens, fixResult.costUSD);
 
   await job.updateData({
     ...job.data,
@@ -304,6 +324,7 @@ async function validatePhase(job: Job<JobData>): Promise<void> {
     validateAttempt: attempt + 1,
     phase: 'validate',
   });
+  dashboardStore.updatePhase('validate');
 
   checkAbort(getAbortSignal(job.id!));
   await validatePhase(job);
@@ -345,6 +366,7 @@ async function pushPhase(job: Job<JobData>): Promise<void> {
       prNumber,
       phase: 'ci_wait',
     });
+    dashboardStore.updatePhase('ci_wait');
 
     await notify(`PR created for ${data.issueIdentifier}: ${prUrl}\nWaiting for CI...`);
 
@@ -357,6 +379,7 @@ async function pushPhase(job: Job<JobData>): Promise<void> {
       prNumber,
       phase: 'mark_done',
     });
+    dashboardStore.updatePhase('mark_done');
 
     await notify(`Pushed ${currentTaskLabel(data)} to ${prUrl}`);
 
