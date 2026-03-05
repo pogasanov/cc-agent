@@ -1,14 +1,31 @@
-import { type ReactElement } from 'react';
+import { type ReactElement, useState, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { JobList } from './components/JobList.js';
 import { LogStream } from './components/LogStream.js';
 import { CommandInput } from './components/CommandInput.js';
 import { StatusBar } from './components/StatusBar.js';
 
-export function App(): ReactElement {
+function useTerminalSize() {
   const { stdout } = useStdout();
-  const height = stdout?.rows ?? 24;
-  const width = stdout?.columns ?? 80;
+  const [size, setSize] = useState({
+    width: stdout?.columns ?? 80,
+    height: stdout?.rows ?? 24,
+  });
+
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => {
+      setSize({ width: stdout.columns, height: stdout.rows });
+    };
+    stdout.on('resize', onResize);
+    return () => { stdout.off('resize', onResize); };
+  }, [stdout]);
+
+  return size;
+}
+
+export function App(): ReactElement {
+  const { width, height } = useTerminalSize();
   const contentHeight = height - 2; // reserve 2 rows for input + status bar
   const leftWidth = Math.floor(width / 2);
 
