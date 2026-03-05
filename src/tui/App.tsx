@@ -1,5 +1,5 @@
 import { type ReactElement, useState, useEffect } from 'react';
-import { Box, Text, useStdout } from 'ink';
+import { Box, useStdout } from 'ink';
 import { JobList } from './components/JobList.js';
 import { LogStream } from './components/LogStream.js';
 import { CommandInput } from './components/CommandInput.js';
@@ -27,22 +27,16 @@ function useTerminalSize() {
 export function App(): ReactElement {
   const { width, height } = useTerminalSize();
   const contentHeight = height - 2; // reserve 2 rows for input + status bar
-  const leftWidth = Math.floor(width / 2);
+  const logsHeight = Math.floor(contentHeight * 0.6);
+  const jobsHeight = contentHeight - logsHeight;
 
   return (
     <Box flexDirection="column" width={width} height={height}>
-      <Box flexDirection="row" height={contentHeight}>
-        <Box width={leftWidth} flexDirection="column" overflowX="hidden">
-          <JobList />
-        </Box>
-        <Box width={1} flexDirection="column">
-          {Array.from({ length: contentHeight }, (_, i) => (
-            <Text key={i}>│</Text>
-          ))}
-        </Box>
-        <Box width={width - leftWidth - 1} flexDirection="column" overflowX="hidden">
-          <LogStream />
-        </Box>
+      <Box height={logsHeight} flexDirection="column" overflowX="hidden">
+        <LogStream />
+      </Box>
+      <Box height={jobsHeight} flexDirection="column" overflowX="hidden">
+        <JobList />
       </Box>
       <CommandInput />
       <StatusBar />
