@@ -240,7 +240,7 @@ export async function restartJobFresh(jobId: string): Promise<boolean> {
 }
 
 /** Get all jobs for display */
-export async function listJobs(): Promise<Array<{ id: string; state: string; identifier: string; title: string; phase: string; delayedUntil?: number }>> {
+export async function listJobs(): Promise<Array<{ id: string; state: string; identifier: string; title: string; phase: string; delayedUntil?: number; subIssues: Array<{ identifier: string; title: string }>; currentSubIssueIndex: number }>> {
   const jobs = await queue.getJobs(['active', 'waiting', 'delayed', 'failed']);
   const result = [];
   for (const job of jobs) {
@@ -253,6 +253,8 @@ export async function listJobs(): Promise<Array<{ id: string; state: string; ide
       title: job.data.issueTitle ?? '',
       phase: job.data.phase,
       delayedUntil: state === 'delayed' ? job.timestamp + job.delay : undefined,
+      subIssues: (job.data.subIssues ?? []).map((s) => ({ identifier: s.identifier, title: s.title })),
+      currentSubIssueIndex: job.data.currentSubIssueIndex ?? 0,
     });
   }
   return result;
@@ -264,7 +266,7 @@ async function refreshQueueInStore(): Promise<void> {
     dashboardStore.refreshQueue(
       jobs
         .filter((j) => j.state !== 'active')
-        .map((j) => ({ jobId: j.id, identifier: j.identifier, title: j.title, state: j.state, delayedUntil: j.delayedUntil })),
+        .map((j) => ({ jobId: j.id, identifier: j.identifier, title: j.title, state: j.state, delayedUntil: j.delayedUntil, subIssues: j.subIssues, currentSubIssueIndex: j.currentSubIssueIndex })),
     );
   } catch {
     // Ignore errors during refresh — queue may not be ready yet

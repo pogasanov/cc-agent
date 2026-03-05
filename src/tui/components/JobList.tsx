@@ -1,6 +1,6 @@
 import { useState, useEffect, type ReactElement } from 'react';
 import { Box, Text } from 'ink';
-import { dashboardStore, type ActiveJob, type QueuedJob } from '../store.js';
+import { dashboardStore, type ActiveJob, type QueuedJob, type SubIssueInfo } from '../store.js';
 
 function formatElapsed(startedAt: number): string {
   const secs = Math.floor((Date.now() - startedAt) / 1000);
@@ -8,40 +8,6 @@ function formatElapsed(startedAt: number): string {
   const rem = secs % 60;
   if (mins === 0) return `${rem}s`;
   return `${mins}m${rem}s`;
-}
-
-// Column widths
-const COL = { id: 3, identifier: 12, phase: 12, status: 10 } as const;
-
-function HeaderRow(): ReactElement {
-  return (
-    <Box>
-      <Box width={COL.id}><Text bold dimColor>#</Text></Box>
-      <Box width={COL.identifier}><Text bold dimColor>Issue</Text></Box>
-      <Box width={COL.phase}><Text bold dimColor>Phase</Text></Box>
-      <Box width={COL.status}><Text bold dimColor>Status</Text></Box>
-      <Box flexGrow={1}><Text bold dimColor>Title</Text></Box>
-    </Box>
-  );
-}
-
-function ActiveRow({ job, index }: { job: ActiveJob; index: number }): ReactElement {
-  const [, setTick] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  return (
-    <Box>
-      <Box width={COL.id}><Text bold color="green">{index}</Text></Box>
-      <Box width={COL.identifier}><Text bold>{job.identifier}</Text></Box>
-      <Box width={COL.phase}><Text color="green">{job.phase}</Text></Box>
-      <Box width={COL.status}><Text color="green">{formatElapsed(job.startedAt)}</Text></Box>
-      <Box flexGrow={1}><Text>{job.title}</Text></Box>
-    </Box>
-  );
 }
 
 function formatCountdown(until: number): string {
@@ -52,26 +18,121 @@ function formatCountdown(until: number): string {
   return `${mins}m${secs}s`;
 }
 
-function QueuedRow({ job, index }: { job: QueuedJob; index: number }): ReactElement {
-  const [, setTick] = useState(0);
-  const isDelayed = job.state === 'delayed' && job.delayedUntil;
+// Column widths for sub-issue rows
+const COL = { marker: 4, identifier: 12, phase: 12, status: 10 } as const;
 
-  useEffect(() => {
-    if (!isDelayed) return;
-    const timer = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(timer);
-  }, [isDelayed]);
-
-  const stateColor = job.state === 'failed' ? 'red' : job.state === 'delayed' ? 'yellow' : 'gray';
-  const statusText = isDelayed ? `${formatCountdown(job.delayedUntil!)}` : job.state;
-
+function SubIssueHeaderRow(): ReactElement {
   return (
     <Box>
-      <Box width={COL.id}><Text dimColor>{index}</Text></Box>
-      <Box width={COL.identifier}><Text dimColor>{job.identifier}</Text></Box>
-      <Box width={COL.phase}><Text dimColor>-</Text></Box>
-      <Box width={COL.status}><Text color={stateColor}>{statusText}</Text></Box>
-      <Box flexGrow={1}><Text dimColor>{job.title}</Text></Box>
+      <Box width={COL.marker}><Text dimColor> </Text></Box>
+      <Box width={COL.identifier}><Text bold dimColor>Issue</Text></Box>
+      <Box width={COL.phase}><Text bold dimColor>Phase</Text></Box>
+      <Box width={COL.status}><Text bold dimColor>Status</Text></Box>
+      <Box flexGrow={1}><Text bold dimColor>Title</Text></Box>
+    </Box>
+  );
+}
+
+interface IssueBlockProps {
+  identifier: string;
+  title: string;
+  subIssues: SubIssueInfo[];
+  currentSubIssueIndex: number;
+  isActive: boolean;
+  phase?: string;
+  startedAt?: number;
+  state?: string;
+  delayedUntil?: number;
+}
+
+function IssueBlock({ identifier, title, subIssues, currentSubIssueIndex, isActive, phase, startedAt, state, delayedUntil }: IssueBlockProps): ReactElement {
+  const [, setTick] = useState(0);
+  const isDelayed = state === 'delayed' && delayedUntil;
+
+  useEffect(() => {
+    if (!isActive && !isDelayed) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [isActive, isDelayed]);
+
+  const stateColor = isActive ? 'green' : state === 'failed' ? 'red' : state === 'delayed' ? 'yellow' : 'gray';
+  const statusLabel = isActive
+    ? (startedAt ? formatElapsed(startedAt) : 'active')
+    : isDelayed
+      ? formatCountdown(delayedUntil!)
+      : (state ?? 'waiting');
+
+  const hasSubIssues = subIssues.length > 0;
+
+  return (
+    <Box flexDirection="column">
+      {/* Parent issue header — full width, centered */}
+      <Box justifyContent="center">
+        <Text bold color={stateColor}>
+          {'─── '}
+          {identifier}{' '}{title}
+          {' ── '}
+          <Text color={stateColor}>{statusLabel}</Text>
+          {' ───'}
+        </Text>
+      </Box>
+
+      {hasSubIssues ? (
+        <>
+          <SubIssueHeaderRow />
+          {subIssues.map((sub, i) => {
+            const isCurrent = i === currentSubIssueIndex;
+            const isDone = i < currentSubIssueIndex;
+            const isPending = i > currentSubIssueIndex;
+
+            let subPhase = '-';
+            let subStatus = 'pending';
+            let subColor: string = 'gray';
+            let marker = '  ';
+
+            if (isDone) {
+              subPhase = '-';
+              subStatus = 'done';
+              subColor = 'gray';
+              marker = '✓ ';
+            } else if (isCurrent && isActive) {
+              subPhase = phase ?? '-';
+              subStatus = startedAt ? formatElapsed(startedAt) : 'active';
+              subColor = 'green';
+              marker = '▶ ';
+            } else if (isCurrent && !isActive) {
+              subPhase = '-';
+              subStatus = isDelayed ? formatCountdown(delayedUntil!) : (state ?? 'waiting');
+              subColor = stateColor;
+              marker = '▶ ';
+            } else if (isPending) {
+              subPhase = '-';
+              subStatus = 'pending';
+              subColor = 'gray';
+              marker = '  ';
+            }
+
+            return (
+              <Box key={sub.identifier}>
+                <Box width={COL.marker}><Text color={subColor}>{marker}</Text></Box>
+                <Box width={COL.identifier}><Text color={isDone ? 'gray' : undefined} dimColor={isDone || isPending} bold={isCurrent}>{sub.identifier}</Text></Box>
+                <Box width={COL.phase}><Text color={subColor}>{subPhase}</Text></Box>
+                <Box width={COL.status}><Text color={subColor}>{subStatus}</Text></Box>
+                <Box flexGrow={1}><Text dimColor={isDone || isPending} bold={isCurrent}>{sub.title}</Text></Box>
+              </Box>
+            );
+          })}
+        </>
+      ) : (
+        /* No sub-issues — show the issue itself as the single row */
+        <Box>
+          <Box width={COL.marker}><Text color={stateColor}>{'▶ '}</Text></Box>
+          <Box width={COL.identifier}><Text bold>{identifier}</Text></Box>
+          <Box width={COL.phase}><Text color={stateColor}>{isActive ? (phase ?? '-') : '-'}</Text></Box>
+          <Box width={COL.status}><Text color={stateColor}>{statusLabel}</Text></Box>
+          <Box flexGrow={1}><Text>{title}</Text></Box>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -89,18 +150,33 @@ export function JobList(): ReactElement {
     return () => { dashboardStore.off('update', handler); };
   }, []);
 
-  let nextIndex = 1;
+  const hasJobs = activeJob || queuedJobs.length > 0;
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <HeaderRow />
-      {activeJob ? (
-        <ActiveRow job={activeJob} index={nextIndex++} />
-      ) : (
-        <Text dimColor>No active job</Text>
+    <Box flexDirection="column" paddingX={1} gap={1}>
+      {!hasJobs && <Text dimColor>No jobs in queue</Text>}
+      {activeJob && (
+        <IssueBlock
+          identifier={activeJob.identifier}
+          title={activeJob.title}
+          subIssues={activeJob.subIssues}
+          currentSubIssueIndex={activeJob.currentSubIssueIndex}
+          isActive={true}
+          phase={activeJob.phase}
+          startedAt={activeJob.startedAt}
+        />
       )}
       {queuedJobs.map((job) => (
-        <QueuedRow key={job.jobId} job={job} index={nextIndex++} />
+        <IssueBlock
+          key={job.jobId}
+          identifier={job.identifier}
+          title={job.title}
+          subIssues={job.subIssues}
+          currentSubIssueIndex={job.currentSubIssueIndex}
+          isActive={false}
+          state={job.state}
+          delayedUntil={job.delayedUntil}
+        />
       ))}
     </Box>
   );

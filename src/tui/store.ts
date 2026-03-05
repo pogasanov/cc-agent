@@ -1,5 +1,10 @@
 import { EventEmitter } from 'events';
 
+export interface SubIssueInfo {
+  identifier: string;
+  title: string;
+}
+
 export interface ActiveJob {
   jobId: string;
   identifier: string;
@@ -9,6 +14,8 @@ export interface ActiveJob {
   inputTokens: number;
   outputTokens: number;
   costUSD: number;
+  subIssues: SubIssueInfo[];
+  currentSubIssueIndex: number;
 }
 
 export interface QueuedJob {
@@ -17,6 +24,8 @@ export interface QueuedJob {
   title: string;
   state: string;
   delayedUntil?: number;
+  subIssues: SubIssueInfo[];
+  currentSubIssueIndex: number;
 }
 
 export interface LogEntry {
@@ -33,13 +42,20 @@ class DashboardStore extends EventEmitter {
   logs: LogEntry[] = [];
 
   setActiveJob(job: Omit<ActiveJob, 'inputTokens' | 'outputTokens' | 'costUSD'>): void {
-    this.activeJob = { ...job, inputTokens: 0, outputTokens: 0, costUSD: 0 };
+    this.activeJob = { ...job, inputTokens: 0, outputTokens: 0, costUSD: 0, subIssues: job.subIssues ?? [], currentSubIssueIndex: job.currentSubIssueIndex ?? 0 };
     this.emit('update');
   }
 
   updatePhase(phase: string): void {
     if (this.activeJob) {
       this.activeJob.phase = phase;
+      this.emit('update');
+    }
+  }
+
+  updateSubIssueIndex(index: number): void {
+    if (this.activeJob) {
+      this.activeJob.currentSubIssueIndex = index;
       this.emit('update');
     }
   }

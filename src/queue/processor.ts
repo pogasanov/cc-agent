@@ -52,6 +52,8 @@ export async function processJob(job: Job<JobData>): Promise<void> {
       title: job.data.issueTitle,
       phase: job.data.phase,
       startedAt: Date.now(),
+      subIssues: (job.data.subIssues ?? []).map((s) => ({ identifier: s.identifier, title: s.title })),
+      currentSubIssueIndex: job.data.currentSubIssueIndex ?? 0,
     });
 
     checkAbort(signal);
@@ -461,6 +463,7 @@ async function markDonePhase(job: Job<JobData>): Promise<void> {
       phase: 'plan',
     });
 
+    dashboardStore.updateSubIssueIndex(nextIndex);
     checkAbort(getAbortSignal(job.id!));
     await planPhase(job);
   } else {
