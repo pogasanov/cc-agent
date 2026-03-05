@@ -483,6 +483,7 @@ async function markDonePhase(job: Job<JobData>): Promise<void> {
     });
 
     dashboardStore.updateSubIssueIndex(nextIndex);
+    dashboardStore.updatePhase('plan');
     checkAbort(getAbortSignal(job.id!));
     await planPhase(job);
   } else {
