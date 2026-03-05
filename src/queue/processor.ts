@@ -41,11 +41,25 @@ export async function processJob(job: Job<JobData>): Promise<void> {
   try {
     checkAbort(signal);
 
+    // Show job in TUI immediately, before setupJob blocks on Telegram
+    dashboardStore.setActiveJob({
+      jobId: job.id!,
+      identifier: data.issueIdentifier || data.linearIssueId,
+      title: data.issueTitle || '',
+      phase: 'setup',
+      startedAt: Date.now(),
+      subIssues: (data.subIssues ?? []).map((s) => ({ identifier: s.identifier, title: s.title })),
+      currentSubIssueIndex: data.currentSubIssueIndex ?? 0,
+    });
+
+    checkAbort(signal);
+
     // If this is a fresh job, fetch issue details first
     if (!data.issueIdentifier) {
       await setupJob(job);
     }
 
+    // Update with fetched details (identifier, title, subIssues may have changed)
     dashboardStore.setActiveJob({
       jobId: job.id!,
       identifier: job.data.issueIdentifier || job.data.linearIssueId,

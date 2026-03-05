@@ -66,17 +66,6 @@ function IssueBlock({ identifier, title, subIssues, currentSubIssueIndex, isActi
 
   return (
     <Box flexDirection="column">
-      {/* Parent issue header — full width, centered */}
-      <Box justifyContent="center">
-        <Text bold color={stateColor}>
-          {'─── '}
-          {identifier}{' '}{title}
-          {' ── '}
-          <Text color={stateColor}>{statusLabel}</Text>
-          {' ───'}
-        </Text>
-      </Box>
-
       {hasSubIssues ? (
         <>
           <SubIssueHeaderRow />
