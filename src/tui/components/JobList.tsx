@@ -23,7 +23,7 @@ const COL = { marker: 4, identifier: 12, phase: 12, status: 10 } as const;
 
 function SubIssueHeaderRow(): ReactElement {
   return (
-    <Box>
+    <Box width="100%">
       <Box width={COL.marker}><Text dimColor> </Text></Box>
       <Box width={COL.identifier}><Text bold dimColor>Issue</Text></Box>
       <Box width={COL.phase}><Text bold dimColor>Phase</Text></Box>
@@ -113,7 +113,7 @@ function IssueBlock({ identifier, title, subIssues, currentSubIssueIndex, isActi
             }
 
             return (
-              <Box key={sub.identifier}>
+              <Box key={sub.identifier} width="100%">
                 <Box width={COL.marker}><Text color={subColor}>{marker}</Text></Box>
                 <Box width={COL.identifier}><Text color={isDone ? 'gray' : undefined} dimColor={isDone || isPending} bold={isCurrent}>{sub.identifier}</Text></Box>
                 <Box width={COL.phase}><Text color={subColor}>{subPhase}</Text></Box>
@@ -125,7 +125,7 @@ function IssueBlock({ identifier, title, subIssues, currentSubIssueIndex, isActi
         </>
       ) : (
         /* No sub-issues — show the issue itself as the single row */
-        <Box>
+        <Box width="100%">
           <Box width={COL.marker}><Text color={stateColor}>{'▶ '}</Text></Box>
           <Box width={COL.identifier}><Text bold>{identifier}</Text></Box>
           <Box width={COL.phase}><Text color={stateColor}>{isActive ? (phase ?? '-') : '-'}</Text></Box>
