@@ -24,10 +24,10 @@ const COL = { marker: 4, identifier: 12, phase: 12, status: 10 } as const;
 function SubIssueHeaderRow(): ReactElement {
   return (
     <Box width="100%">
-      <Box width={COL.marker}><Text dimColor> </Text></Box>
-      <Box width={COL.identifier}><Text bold dimColor>Issue</Text></Box>
-      <Box width={COL.phase}><Text bold dimColor>Phase</Text></Box>
-      <Box width={COL.status}><Text bold dimColor>Status</Text></Box>
+      <Box width={COL.marker} flexShrink={0}><Text dimColor> </Text></Box>
+      <Box width={COL.identifier} flexShrink={0}><Text bold dimColor>Issue</Text></Box>
+      <Box width={COL.phase} flexShrink={0}><Text bold dimColor>Phase</Text></Box>
+      <Box width={COL.status} flexShrink={0}><Text bold dimColor>Status</Text></Box>
       <Box flexGrow={1}><Text bold dimColor>Title</Text></Box>
     </Box>
   );
@@ -114,10 +114,10 @@ function IssueBlock({ identifier, title, subIssues, currentSubIssueIndex, isActi
 
             return (
               <Box key={sub.identifier} width="100%">
-                <Box width={COL.marker}><Text color={subColor}>{marker}</Text></Box>
-                <Box width={COL.identifier}><Text color={isDone ? 'gray' : undefined} dimColor={isDone || isPending} bold={isCurrent}>{sub.identifier}</Text></Box>
-                <Box width={COL.phase}><Text color={subColor}>{subPhase}</Text></Box>
-                <Box width={COL.status}><Text color={subColor}>{subStatus}</Text></Box>
+                <Box width={COL.marker} flexShrink={0}><Text color={subColor}>{marker}</Text></Box>
+                <Box width={COL.identifier} flexShrink={0}><Text color={isDone ? 'gray' : undefined} dimColor={isDone || isPending} bold={isCurrent}>{sub.identifier}</Text></Box>
+                <Box width={COL.phase} flexShrink={0}><Text color={subColor}>{subPhase}</Text></Box>
+                <Box width={COL.status} flexShrink={0}><Text color={subColor}>{subStatus}</Text></Box>
                 <Box flexGrow={1}><Text dimColor={isDone || isPending} bold={isCurrent}>{sub.title}</Text></Box>
               </Box>
             );
@@ -126,10 +126,10 @@ function IssueBlock({ identifier, title, subIssues, currentSubIssueIndex, isActi
       ) : (
         /* No sub-issues — show the issue itself as the single row */
         <Box width="100%">
-          <Box width={COL.marker}><Text color={stateColor}>{'▶ '}</Text></Box>
-          <Box width={COL.identifier}><Text bold>{identifier}</Text></Box>
-          <Box width={COL.phase}><Text color={stateColor}>{isActive ? (phase ?? '-') : '-'}</Text></Box>
-          <Box width={COL.status}><Text color={stateColor}>{statusLabel}</Text></Box>
+          <Box width={COL.marker} flexShrink={0}><Text color={stateColor}>{'▶ '}</Text></Box>
+          <Box width={COL.identifier} flexShrink={0}><Text bold>{identifier}</Text></Box>
+          <Box width={COL.phase} flexShrink={0}><Text color={stateColor}>{isActive ? (phase ?? '-') : '-'}</Text></Box>
+          <Box width={COL.status} flexShrink={0}><Text color={stateColor}>{statusLabel}</Text></Box>
           <Box flexGrow={1}><Text>{title}</Text></Box>
         </Box>
       )}
