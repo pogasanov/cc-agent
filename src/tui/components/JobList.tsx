@@ -138,21 +138,35 @@ function IssueBlock({ identifier, title, subIssues, currentSubIssueIndex, isActi
 }
 
 export function JobList(): ReactElement {
+  const [activeJob, setActiveJob] = useState(dashboardStore.activeJob);
   const [queuedJobs, setQueuedJobs] = useState(dashboardStore.queuedJobs);
 
   useEffect(() => {
     const handler = () => {
+      setActiveJob(dashboardStore.activeJob);
       setQueuedJobs([...dashboardStore.queuedJobs]);
     };
     dashboardStore.on('update', handler);
     return () => { dashboardStore.off('update', handler); };
   }, []);
 
-  const hasJobs = queuedJobs.length > 0;
+  const hasJobs = activeJob != null || queuedJobs.length > 0;
 
   return (
     <Box flexDirection="column" paddingX={1} gap={1}>
       {!hasJobs && <Text dimColor>No jobs in queue</Text>}
+      {activeJob && (
+        <IssueBlock
+          key={activeJob.jobId}
+          identifier={activeJob.identifier}
+          title={activeJob.title}
+          subIssues={activeJob.subIssues}
+          currentSubIssueIndex={activeJob.currentSubIssueIndex}
+          isActive={true}
+          phase={activeJob.phase}
+          startedAt={activeJob.startedAt}
+        />
+      )}
       {queuedJobs.map((job) => (
         <IssueBlock
           key={job.jobId}
