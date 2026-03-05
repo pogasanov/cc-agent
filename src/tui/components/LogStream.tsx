@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type ReactElement } from 'react';
-import { Box, Text, useInput, useStdout } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import { dashboardStore, type LogEntry } from '../store.js';
 
 const COL_TIME = 20;
@@ -20,12 +20,11 @@ function LogLine({ entry }: { entry: LogEntry }): ReactElement {
   );
 }
 
-export function LogStream(): ReactElement {
+export function LogStream({ height }: { height: number }): ReactElement {
   const [logs, setLogs] = useState<LogEntry[]>(dashboardStore.logs);
   const [scrollOffset, setScrollOffset] = useState(0);
   const autoScroll = useRef(true);
-  const { stdout } = useStdout();
-  const viewportHeight = (stdout?.rows ?? 24) - 4; // header + status/input rows
+  const viewportHeight = Math.max(1, height - 1); // -1 for header row
 
   useEffect(() => {
     const handler = () => {
