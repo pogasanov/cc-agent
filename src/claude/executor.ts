@@ -107,16 +107,18 @@ export async function runPlanPhase(
   jobId: string,
   resumeSessionId?: string,
   onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void,
+  onSessionId?: (sessionId: string) => void,
 ): Promise<ClaudeResult> {
   const prompt = buildPlanPrompt(taskDescription);
 
-  return withRateLimitRetry('plan', resumeSessionId, (resume) => {
+  return withRateLimitRetry('plan', resumeSessionId, onSessionId, (resume, wrappedOnSessionId) => {
     return runClaudeSession({
       prompt,
       permissionMode: 'plan',
       resume,
       suppressResultNotification: true,
       onUsage,
+      onSessionId: wrappedOnSessionId,
       canUseTool: async (toolName, input) => {
         if (toolName === 'AskUserQuestion') {
           const { text: question, options } = extractQuestion(input);
@@ -140,15 +142,17 @@ export async function runImplPhase(
   jobId: string,
   resumeSessionId?: string,
   onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void,
+  onSessionId?: (sessionId: string) => void,
 ): Promise<ClaudeResult> {
   const effectiveSessionId = resumeSessionId ?? planSessionId;
 
-  return withRateLimitRetry('impl', effectiveSessionId, (resume) => {
+  return withRateLimitRetry('impl', effectiveSessionId, onSessionId, (resume, wrappedOnSessionId) => {
     return runClaudeSession({
       prompt: `The plan has been approved. Proceed with implementation.\n\n## Instructions\n${STANDING_INSTRUCTIONS}`,
       permissionMode: 'default',
       resume,
       onUsage,
+      onSessionId: wrappedOnSessionId,
       canUseTool: async (toolName, input) => {
         if (['Read', 'Edit', 'Write', 'Glob', 'Grep', 'NotebookEdit'].includes(toolName)) {
           return { behavior: 'allow' as const, updatedInput: input };
@@ -183,13 +187,15 @@ export async function runFixPhase(
   validationErrors: string,
   jobId: string,
   onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void,
+  onSessionId?: (sessionId: string) => void,
 ): Promise<ClaudeResult> {
-  return withRateLimitRetry('fix', implSessionId, (resume) => {
+  return withRateLimitRetry('fix', implSessionId, onSessionId, (resume, wrappedOnSessionId) => {
     return runClaudeSession({
       prompt: `The following validation checks failed after your implementation. Please fix all errors:\n\n${validationErrors}\n\n## Instructions\n${STANDING_INSTRUCTIONS}`,
       permissionMode: 'default',
       resume,
       onUsage,
+      onSessionId: wrappedOnSessionId,
       canUseTool: async (toolName, input) => {
         if (['Read', 'Edit', 'Write', 'Glob', 'Grep', 'NotebookEdit'].includes(toolName)) {
           return { behavior: 'allow' as const, updatedInput: input };
@@ -229,6 +235,8 @@ interface SessionOptions {
   canUseTool: (toolName: string, input: Record<string, unknown>) => Promise<any>;
   /** Called after each API turn with incremental token usage */
   onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void;
+  /** Called when the session ID is known (on init), so callers can persist it immediately */
+  onSessionId?: (sessionId: string) => void;
 }
 
 /** Run a single Claude Code session and collect session ID + result */
@@ -260,6 +268,7 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
     if (message.type === 'system' && message.subtype === 'init') {
       sessionId = message.session_id;
       logger.info(`Claude session started: ${sessionId}`);
+      opts.onSessionId?.(sessionId);
     }
 
     if (message.type === 'assistant') {
@@ -339,13 +348,18 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
 async function withRateLimitRetry(
   phase: string,
   initialResume: string | undefined,
-  run: (resume: string | undefined) => Promise<ClaudeResult>,
+  onSessionId: ((sessionId: string) => void) | undefined,
+  run: (resume: string | undefined, wrappedOnSessionId?: (sessionId: string) => void) => Promise<ClaudeResult>,
 ): Promise<ClaudeResult> {
   let lastSessionId = initialResume;
 
+  const wrappedOnSessionId = onSessionId
+    ? (sid: string) => { lastSessionId = sid; onSessionId(sid); }
+    : (sid: string) => { lastSessionId = sid; };
+
   for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
     try {
-      return await run(lastSessionId);
+      return await run(lastSessionId, wrappedOnSessionId);
     } catch (err) {
       if (!isRateLimitError(err) || attempt === MAX_RATE_LIMIT_RETRIES) {
         throw err;

@@ -204,7 +204,8 @@ async function planPhase(job: Job<JobData>): Promise<void> {
   const taskDescription = getCurrentTaskDescription(data);
   await notify(`Prompt for *${taskLabel}*:\n\`\`\`\n${taskDescription}\n\`\`\``);
   const onUsage = (i: number, o: number, c: number) => dashboardStore.addTokens(i, o, c);
-  const result = await runPlanPhase(taskDescription, job.id!, data.planSessionId, onUsage);
+  const onSessionId = (sid: string) => { job.updateData({ ...job.data, planSessionId: sid }); };
+  const result = await runPlanPhase(taskDescription, job.id!, data.planSessionId, onUsage, onSessionId);
 
   await job.updateData({
     ...job.data,
@@ -260,7 +261,8 @@ async function approvalPhase(job: Job<JobData>, retryCount = 0): Promise<void> {
     const taskDescription = getCurrentTaskDescription(data);
     const feedbackPrompt = `${taskDescription}\n\n## Feedback on previous plan\n${approval.feedback}`;
     const onUsage = (i: number, o: number, c: number) => dashboardStore.addTokens(i, o, c);
-    const result = await runPlanPhase(feedbackPrompt, job.id!, data.planSessionId, onUsage);
+    const onSessionId = (sid: string) => { job.updateData({ ...job.data, planSessionId: sid }); };
+    const result = await runPlanPhase(feedbackPrompt, job.id!, data.planSessionId, onUsage, onSessionId);
 
     await job.updateData({
       ...job.data,
@@ -280,11 +282,13 @@ async function implementPhase(job: Job<JobData>): Promise<void> {
   logger.info(`[${data.issueIdentifier}] Implementation phase (job ${job.id})`);
 
   const onUsage = (i: number, o: number, c: number) => dashboardStore.addTokens(i, o, c);
+  const onSessionId = (sid: string) => { job.updateData({ ...job.data, implSessionId: sid }); };
   const result = await runImplPhase(
     data.planSessionId!,
     job.id!,
     data.implSessionId,
     onUsage,
+    onSessionId,
   );
 
   await job.updateData({
@@ -333,7 +337,8 @@ async function validatePhase(job: Job<JobData>): Promise<void> {
   // Send errors to Claude to fix
   logger.info(`[${taskLabel}] Sending validation errors to Claude for fixing`);
   const onUsage = (i: number, o: number, c: number) => dashboardStore.addTokens(i, o, c);
-  const fixResult = await runFixPhase(data.implSessionId!, errorSummary, job.id!, onUsage);
+  const onSessionId = (sid: string) => { job.updateData({ ...job.data, implSessionId: sid }); };
+  const fixResult = await runFixPhase(data.implSessionId!, errorSummary, job.id!, onUsage, onSessionId);
 
   await job.updateData({
     ...job.data,
