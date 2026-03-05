@@ -17,4 +17,5 @@ export function startTUI(): void {
 export function stopTUI(): void {
   inkInstance?.unmount();
   inkInstance = null;
+  process.stdout.write('\n');
 }
