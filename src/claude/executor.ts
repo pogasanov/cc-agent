@@ -106,6 +106,7 @@ export async function runPlanPhase(
   taskDescription: string,
   jobId: string,
   resumeSessionId?: string,
+  onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void,
 ): Promise<ClaudeResult> {
   const prompt = buildPlanPrompt(taskDescription);
 
@@ -115,6 +116,7 @@ export async function runPlanPhase(
       permissionMode: 'plan',
       resume,
       suppressResultNotification: true,
+      onUsage,
       canUseTool: async (toolName, input) => {
         if (toolName === 'AskUserQuestion') {
           const { text: question, options } = extractQuestion(input);
@@ -137,6 +139,7 @@ export async function runImplPhase(
   planSessionId: string,
   jobId: string,
   resumeSessionId?: string,
+  onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void,
 ): Promise<ClaudeResult> {
   const effectiveSessionId = resumeSessionId ?? planSessionId;
 
@@ -145,6 +148,7 @@ export async function runImplPhase(
       prompt: `The plan has been approved. Proceed with implementation.\n\n## Instructions\n${STANDING_INSTRUCTIONS}`,
       permissionMode: 'default',
       resume,
+      onUsage,
       canUseTool: async (toolName, input) => {
         if (['Read', 'Edit', 'Write', 'Glob', 'Grep', 'NotebookEdit'].includes(toolName)) {
           return { behavior: 'allow' as const, updatedInput: input };
@@ -178,12 +182,14 @@ export async function runFixPhase(
   implSessionId: string,
   validationErrors: string,
   jobId: string,
+  onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void,
 ): Promise<ClaudeResult> {
   return withRateLimitRetry('fix', implSessionId, (resume) => {
     return runClaudeSession({
       prompt: `The following validation checks failed after your implementation. Please fix all errors:\n\n${validationErrors}\n\n## Instructions\n${STANDING_INSTRUCTIONS}`,
       permissionMode: 'default',
       resume,
+      onUsage,
       canUseTool: async (toolName, input) => {
         if (['Read', 'Edit', 'Write', 'Glob', 'Grep', 'NotebookEdit'].includes(toolName)) {
           return { behavior: 'allow' as const, updatedInput: input };
@@ -221,6 +227,8 @@ interface SessionOptions {
   /** When true, the final assistant text (= resultText) is not sent via notify(), since the caller will send it separately (e.g. with approval buttons) */
   suppressResultNotification?: boolean;
   canUseTool: (toolName: string, input: Record<string, unknown>) => Promise<any>;
+  /** Called after each API turn with incremental token usage */
+  onUsage?: (inputTokens: number, outputTokens: number, costUSD: number) => void;
 }
 
 /** Run a single Claude Code session and collect session ID + result */
@@ -253,7 +261,8 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
     }
 
     if (message.type === 'assistant') {
-      const content = (message as any).message?.content;
+      const msg = message as any;
+      const content = msg.message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
           if (block.type === 'text' && block.text) {
@@ -272,6 +281,11 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
           }
         }
       }
+      // Report per-turn token usage immediately
+      const usage = msg.message?.usage;
+      if (usage && opts.onUsage) {
+        opts.onUsage(usage.input_tokens ?? 0, usage.output_tokens ?? 0, 0);
+      }
     }
 
     if (message.type === 'user' && (message as any).parent_tool_use_id) {
@@ -289,6 +303,10 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
       outputTokens = msg.usage?.output_tokens ?? 0;
       costUSD = msg.total_cost_usd ?? 0;
       durationMs = msg.duration_ms ?? 0;
+      // Report cost (tokens already reported per-turn via assistant messages)
+      if (opts.onUsage) {
+        opts.onUsage(0, 0, costUSD);
+      }
       logger.info(`[claude] result: ${resultText.slice(0, 500)}`);
     }
   }
