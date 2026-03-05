@@ -21,6 +21,10 @@ export function StatusBar(): ReactElement {
 
   return (
     <Box>
+      <Text bold color="green">{activeJob.identifier}</Text>
+      <Text> </Text>
+      <Text>{activeJob.title}</Text>
+      <Text>  </Text>
       <Text dimColor>IN:</Text><Text>{formatTokens(activeJob.inputTokens)}</Text>
       <Text>  </Text>
       <Text dimColor>OUT:</Text><Text>{formatTokens(activeJob.outputTokens)}</Text>
