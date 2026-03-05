@@ -243,6 +243,8 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
   // can skip notifying it (it will be sent separately, e.g. with approval buttons).
   // All previous texts are flushed (notified) as new ones arrive.
   let pendingText: string | null = null;
+  let reportedInputTokens = 0;
+  let reportedOutputTokens = 0;
 
   const q = query({
     prompt: opts.prompt,
@@ -281,10 +283,17 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
           }
         }
       }
-      // Report per-turn token usage immediately
+      // Report per-turn token usage (BetaMessage includes usage)
       const usage = msg.message?.usage;
       if (usage && opts.onUsage) {
-        opts.onUsage(usage.input_tokens ?? 0, usage.output_tokens ?? 0, 0);
+        const inp = usage.input_tokens ?? 0;
+        const out = usage.output_tokens ?? 0;
+        if (inp > 0 || out > 0) {
+          logger.info(`[claude] turn usage: ${inp} in / ${out} out`);
+          opts.onUsage(inp, out, 0);
+          reportedInputTokens += inp;
+          reportedOutputTokens += out;
+        }
       }
     }
 
@@ -303,9 +312,11 @@ async function runClaudeSession(opts: SessionOptions): Promise<ClaudeResult> {
       outputTokens = msg.usage?.output_tokens ?? 0;
       costUSD = msg.total_cost_usd ?? 0;
       durationMs = msg.duration_ms ?? 0;
-      // Report cost (tokens already reported per-turn via assistant messages)
       if (opts.onUsage) {
-        opts.onUsage(0, 0, costUSD);
+        // Report any tokens not already reported per-turn, plus total cost
+        const deltaIn = Math.max(0, inputTokens - reportedInputTokens);
+        const deltaOut = Math.max(0, outputTokens - reportedOutputTokens);
+        opts.onUsage(deltaIn, deltaOut, costUSD);
       }
       logger.info(`[claude] result: ${resultText.slice(0, 500)}`);
     }
