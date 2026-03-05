@@ -33,6 +33,7 @@ export interface JobData {
   validateAttempt?: number;
   autoAccept?: boolean;
   phase: JobPhase;
+  failReason?: 'shutdown' | 'error' | 'killed';
 }
 
 /** Result of plan approval via Telegram */

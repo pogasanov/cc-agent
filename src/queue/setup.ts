@@ -1,4 +1,4 @@
-import { Queue, Worker, type Job } from 'bullmq';
+import { Queue, Worker, Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import { type Config } from '../config.js';
 import { type JobData } from '../types.js';
@@ -13,6 +13,8 @@ let repoPath: string;
 
 /** AbortControllers for active jobs — kill signals the controller */
 const activeAborts = new Map<string, AbortController>();
+/** Resolvers for awaiting processor completion after kill */
+const completionResolvers = new Map<string, () => void>();
 let shuttingDown = false;
 
 export function isShuttingDown(): boolean {
@@ -33,6 +35,15 @@ export function getAbortSignal(jobId: string): AbortSignal {
 
 export function clearAbort(jobId: string): void {
   activeAborts.delete(jobId);
+}
+
+/** Called from processor's finally block to unblock any pending killJob() await */
+export function signalJobCompletion(jobId: string): void {
+  const resolve = completionResolvers.get(jobId);
+  if (resolve) {
+    resolve();
+    completionResolvers.delete(jobId);
+  }
 }
 
 export function getRedis(): Redis {
@@ -68,11 +79,7 @@ export function initQueue(config: Config): void {
     defaultJobOptions: {
       removeOnComplete: { age: 86400 }, // 24h
       removeOnFail: { age: 86400 },
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 30_000,
-      },
+      attempts: 1,
     },
   });
 
@@ -85,6 +92,7 @@ export function startWorker(): void {
     connection,
     concurrency: 1,
     stalledInterval: 30_000,
+    lockDuration: 300_000,
   });
 
   worker.on('active', () => { refreshQueueInStore(); });
@@ -109,19 +117,36 @@ export function startWorker(): void {
 
 /**
  * Recover jobs that were active when the daemon last crashed.
- * Clears stale locks directly in Redis, then re-enqueues.
+ * Selective recovery based on failReason:
+ * - active jobs: always recover (process crashed)
+ * - failed jobs: only if failReason is 'shutdown' or undefined (crash)
+ * - delayed jobs: recover (cleanup from old retry backoff)
  */
 export async function recoverStalledJobs(): Promise<void> {
   const active = await queue.getJobs(['active']);
   const failed = await queue.getJobs(['failed']);
   const delayed = await queue.getJobs(['delayed']);
 
+  const shouldRecover = (job: Job<JobData>, state: string): boolean => {
+    if (state === 'active' || state === 'delayed') return true;
+    // For failed jobs, only recover shutdown-interrupted or crash-stalled (no failReason)
+    const reason = job.data.failReason;
+    return reason === 'shutdown' || reason === undefined;
+  };
+
   for (const job of [...active, ...failed, ...delayed]) {
     if (!job) continue;
+    const state = await job.getState();
     const id = job.data.issueIdentifier || job.data.linearIssueId;
-    logger.info(`Recovering stuck job ${job.id} (${id}, phase=${job.data.phase})`);
 
-    const data = { ...job.data };
+    if (!shouldRecover(job, state)) {
+      logger.info(`Skipping recovery of job ${job.id} (${id}, state=${state}, failReason=${job.data.failReason})`);
+      continue;
+    }
+
+    logger.info(`Recovering stuck job ${job.id} (${id}, phase=${job.data.phase}, state=${state})`);
+
+    const data = { ...job.data, failReason: undefined };
     const jobId = job.id!;
 
     // Force-remove the lock and job directly from Redis
@@ -183,15 +208,21 @@ export async function resolveCIWait(headSha: string, conclusion: string): Promis
   );
 }
 
-/** Force-kill a job — abort in-flight execution and remove from queue */
+/** Force-kill a job — abort in-flight execution and wait for processor to exit */
 export async function killJob(jobId: string): Promise<boolean> {
-  // Abort the in-flight processor if running
   const ctrl = activeAborts.get(jobId);
   if (ctrl) {
+    // Register a completion promise so we can await processor exit
+    const completionPromise = new Promise<void>((resolve) => {
+      completionResolvers.set(jobId, resolve);
+    });
     ctrl.abort();
-    activeAborts.delete(jobId);
-    // Don't force-remove from Redis — let the processor return naturally
-    // so BullMQ can clean up its lock manager timer without errors.
+    // Wait for processor to finish (max 60s safety timeout)
+    await Promise.race([
+      completionPromise,
+      new Promise<void>((resolve) => setTimeout(resolve, 60_000)),
+    ]);
+    completionResolvers.delete(jobId);
     logger.info(`Killed job ${jobId}`);
     return true;
   }
@@ -215,12 +246,17 @@ export async function killJob(jobId: string): Promise<boolean> {
   return true;
 }
 
-/** Restart a job — remove it and re-enqueue from its current phase */
+/** Restart a job — kill if active, remove, and re-enqueue from its current phase */
 export async function restartJob(jobId: string): Promise<boolean> {
+  // If actively processing, kill first and wait for processor to exit
+  if (activeAborts.has(jobId)) {
+    await killJob(jobId);
+  }
+
   const job = await queue.getJob(jobId);
   if (!job) return false;
 
-  const data = { ...job.data };
+  const data = { ...job.data, failReason: undefined };
   await job.remove();
   await queue.add('execute-issue', data, { jobId });
   logger.info(`Restarted job ${jobId} in phase ${data.phase}`);
@@ -229,10 +265,15 @@ export async function restartJob(jobId: string): Promise<boolean> {
 
 /** Restart a job from scratch (reset to plan phase) */
 export async function restartJobFresh(jobId: string): Promise<boolean> {
+  // If actively processing, kill first and wait for processor to exit
+  if (activeAborts.has(jobId)) {
+    await killJob(jobId);
+  }
+
   const job = await queue.getJob(jobId);
   if (!job) return false;
 
-  const data = { ...job.data, phase: 'plan' as const, planSessionId: undefined, implSessionId: undefined, planText: undefined };
+  const data = { ...job.data, phase: 'plan' as const, planSessionId: undefined, implSessionId: undefined, planText: undefined, failReason: undefined };
   await job.remove();
   await queue.add('execute-issue', data, { jobId });
   logger.info(`Restarted job ${jobId} from scratch`);

@@ -17,7 +17,7 @@ import {
   checkCIStatus,
   markPRReady,
 } from '../git/operations.js';
-import { getAbortSignal, clearAbort, isShuttingDown, getRepoPath } from './setup.js';
+import { getAbortSignal, clearAbort, isShuttingDown, getRepoPath, signalJobCompletion } from './setup.js';
 import { logger } from '../logger.js';
 import { dashboardStore } from '../tui/store.js';
 
@@ -86,21 +86,25 @@ export async function processJob(job: Job<JobData>): Promise<void> {
     if (err instanceof JobKilledError) {
       if (isShuttingDown()) {
         logger.info(`Job ${job.id} interrupted by shutdown — will resume on restart`);
+        await job.updateData({ ...job.data, failReason: 'shutdown' });
         throw err; // Let BullMQ mark as failed so recoverStalledJobs picks it up
       }
       logger.info(`Job ${job.id} was killed`);
+      await job.updateData({ ...job.data, failReason: 'killed' });
       return; // User-initiated kill — don't retry
     }
-    const currentData = job.data; // Use fresh reference — data from line 34 may be stale after phase transitions
+    const currentData = job.data;
     logger.error(`Job ${job.id} failed in ${currentData.phase} phase: ${err}`);
+    await job.updateData({ ...job.data, failReason: 'error' });
     await notifyWithRetry(
       `Error in ${currentData.issueIdentifier || currentData.linearIssueId} (${currentData.phase}): ${err}`,
       job.id!,
     );
-    throw err; // Let BullMQ handle the retry
+    throw err;
   } finally {
     dashboardStore.clearActiveJob();
     clearAbort(job.id!);
+    signalJobCompletion(job.id!);
   }
 }
 
